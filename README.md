@@ -18,7 +18,6 @@ Illusionator Infinity is a research-informed generative web app that synthesizes
   - Mach band luminance ramps
   - Troxler fade fields
   - Hering radial warp contexts
-  - Ebbinghaus context circles
   - Muller-Lyer arrow fields
   - Ponzo perspective corridors
   - Poggendorff occlusion cuts

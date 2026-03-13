@@ -11,6 +11,7 @@ const MIN_QUALITY_PASSES = 7;
 const viewerEl = document.getElementById("viewer");
 const canvas = document.getElementById("illusionCanvas");
 const researchListEl = document.getElementById("researchList");
+const researchMixMetaEl = document.getElementById("researchMixMeta");
 
 const menuToggleBtn = document.getElementById("menuToggleBtn");
 const menuCloseBtn = document.getElementById("menuCloseBtn");
@@ -49,6 +50,7 @@ const state = {
     complexity: 6,
     motion: 4,
     noveltyBias: 0.75,
+    enabledPrinciples: [],
   },
   discoveries: [],
   preference: {}, // legacy mirror of linear preference weights
@@ -261,23 +263,6 @@ const researchPrinciples = [
     draw: drawHeringWarp,
   },
   {
-    id: "ebbinghaus_context",
-    name: "Ebbinghaus Context",
-    mechanism:
-      "Identical center circles appear different in size when surrounded by larger or smaller neighbors.",
-    sample: (rng, options) => ({
-      centerRadius: rng.float(14, 34 + options.complexity * 2),
-      nearCount: rng.int(6, 11 + Math.floor(options.complexity / 2)),
-      farCount: rng.int(6, 12 + Math.floor(options.complexity / 2)),
-      nearScale: rng.float(0.35, 0.76),
-      farScale: rng.float(1.15, 1.92),
-      ringGap: rng.float(0.35, 0.84),
-      pulse: rng.float(0.05, 0.35 + options.motion * 0.04),
-      invert: rng.next() < 0.5,
-    }),
-    draw: drawEbbinghausContext,
-  },
-  {
     id: "muller_lyer_field",
     name: "Muller-Lyer Field",
     mechanism:
@@ -356,6 +341,7 @@ const researchPrinciples = [
 ];
 
 const researchById = Object.fromEntries(researchPrinciples.map((item) => [item.id, item]));
+const allPrincipleIds = researchPrinciples.map((item) => item.id);
 const blendModes = [
   "source-over",
   "screen",
@@ -390,6 +376,30 @@ function weightedChoice(items, weights, rng) {
     }
   }
   return items[items.length - 1];
+}
+
+function sanitizeLayers(layers) {
+  if (!Array.isArray(layers)) {
+    return [];
+  }
+
+  return layers.filter((layer) => layer?.principleId && researchById[layer.principleId]);
+}
+
+function normalizeEnabledPrinciples(ids) {
+  if (!Array.isArray(ids)) {
+    return [...allPrincipleIds];
+  }
+
+  const normalized = Array.from(
+    new Set(ids.filter((principleId) => typeof principleId === "string" && researchById[principleId]))
+  );
+  return normalized.length ? normalized : [...allPrincipleIds];
+}
+
+function getEnabledPrinciples() {
+  state.options.enabledPrinciples = normalizeEnabledPrinciples(state.options.enabledPrinciples);
+  return state.options.enabledPrinciples;
 }
 
 function sigmoid(value) {
@@ -571,9 +581,10 @@ function computeContrastMetric(palette) {
   return clamp((accentLight - palette.bgA.l + 40) / 100, 0, 1);
 }
 
-function choosePrinciple(rng, alreadyPicked = []) {
+function choosePrinciple(rng, alreadyPicked = [], allowedIds = null) {
   ensurePreferenceModelShape();
-  const ids = researchPrinciples.map((p) => p.id);
+  const ids =
+    Array.isArray(allowedIds) && allowedIds.length ? allowedIds : getEnabledPrinciples();
   const weights = ids.map((id) => {
     const base = 1;
     const linearPref = getLinearPreference(id);
@@ -582,8 +593,22 @@ function choosePrinciple(rng, alreadyPicked = []) {
       const sum = alreadyPicked.reduce((acc, pickedId) => acc + getPairPreference(id, pickedId), 0);
       pairPref = sum / alreadyPicked.length;
     }
-    const repeatPenalty = alreadyPicked.includes(id) ? 0.55 : 1;
+    const repeatPenalty = alreadyPicked.includes(id) ? 0.72 : 1;
     return clamp((base + linearPref * 0.22 + pairPref * 0.2) * repeatPenalty, 0.2, 3.9);
+  });
+  return weightedChoice(ids, weights, rng);
+}
+
+function chooseExistingPrinciple(rng, alreadyPicked = []) {
+  const ids = Array.from(new Set(alreadyPicked));
+  if (!ids.length) {
+    return null;
+  }
+
+  const weights = ids.map((id) => {
+    const repeatedCount = alreadyPicked.filter((pickedId) => pickedId === id).length;
+    const linearPref = getLinearPreference(id);
+    return clamp(1 + repeatedCount * 0.55 + linearPref * 0.2, 0.3, 4.2);
   });
   return weightedChoice(ids, weights, rng);
 }
@@ -694,6 +719,13 @@ function rangePenalty(value, min, max, weight = 1) {
   return 0;
 }
 
+function upperPenalty(value, max, span = 1, weight = 1) {
+  if (value <= max) {
+    return 0;
+  }
+  return ((value - max) / Math.max(0.01, span)) * weight;
+}
+
 function analyzeRenderedQuality(illusion) {
   renderIllusion(illusion, qualityProbeCanvas, 0, true);
 
@@ -773,6 +805,14 @@ function evaluateCandidateQuality(illusion) {
   const alphaLoad = illusion.layers.reduce((sum, layer) => sum + layer.alpha, 0) / layerTotal;
   const centerConcentration =
     illusion.layers.filter((layer) => Math.hypot(layer.offsetX, layer.offsetY) < 0.05).length / layerTotal;
+  const centerAlphaLoad =
+    illusion.layers
+      .filter((layer) => Math.hypot(layer.offsetX, layer.offsetY) < 0.05)
+      .reduce((sum, layer) => sum + layer.alpha, 0) / layerTotal;
+  const uniquePrinciples = new Set(illusion.layers.map((layer) => layer.principleId)).size;
+  const uniqueDensity = uniquePrinciples / layerTotal;
+  const nonSourceBlendRatio =
+    illusion.layers.filter((layer) => layer.blend && layer.blend !== "source-over").length / layerTotal;
 
   const hardFail =
     metrics.contrast < 0.16 ||
@@ -781,7 +821,10 @@ function evaluateCandidateQuality(illusion) {
     metrics.edgeDensity > 0.38 ||
     metrics.centerEdgeDensity > 0.46 ||
     metrics.saturation < 0.05 ||
-    alphaLoad > 0.93;
+    alphaLoad > 0.93 ||
+    layerTotal > 8 ||
+    uniquePrinciples > 5 ||
+    (centerConcentration > 0.76 && alphaLoad > 0.82);
 
   let penalty = 0;
   penalty += rangePenalty(metrics.contrast, 0.24, 0.86, 0.95);
@@ -790,15 +833,24 @@ function evaluateCandidateQuality(illusion) {
   penalty += rangePenalty(metrics.saturation, 0.1, 0.8, 0.45);
   penalty += rangePenalty(alphaLoad, 0.38, 0.82, 0.52);
   penalty += rangePenalty(centerConcentration, 0.2, 0.78, 0.32);
+  penalty += upperPenalty(layerTotal, 6.4, 2.2, 0.44);
+  penalty += upperPenalty(uniquePrinciples, 4, 1.6, 0.52);
+  penalty += upperPenalty(uniqueDensity, 0.8, 0.18, 0.58);
+  penalty += upperPenalty(nonSourceBlendRatio, 0.74, 0.24, 0.28);
+  penalty += upperPenalty(centerAlphaLoad, 0.48, 0.24, 0.46);
 
   const qualityScore = clamp(1 - penalty, 0, 1);
   return {
-    pass: !hardFail && qualityScore >= 0.34,
+    pass: !hardFail && qualityScore >= 0.42,
     qualityScore,
     metrics: {
       ...metrics,
       alphaLoad,
       centerConcentration,
+      centerAlphaLoad,
+      uniquePrinciples,
+      uniqueDensity,
+      nonSourceBlendRatio,
     },
   };
 }
@@ -816,13 +868,31 @@ function computeCompositeScore(illusion) {
 function buildIllusion(seed, parentId = null) {
   const rng = new SeedRng(seed);
   const palette = makePalette(rng);
-  const maxLayers = clamp(2 + Math.round(state.options.complexity * 0.82), 4, 11);
-  const layerCount = rng.int(2, maxLayers);
+  const enabledPrinciples = getEnabledPrinciples();
+  const minLayers = state.options.complexity >= 7 ? 3 : 2;
+  const maxLayers = clamp(2 + Math.round(state.options.complexity * 0.56), 3, 8);
+  const layerCount = rng.int(minLayers, Math.max(minLayers, maxLayers));
+  const minUniqueTarget = Math.min(enabledPrinciples.length, Math.min(layerCount, state.options.complexity >= 6 ? 3 : 2));
+  const maxUniqueTarget = Math.min(enabledPrinciples.length, layerCount, clamp(2 + Math.floor(state.options.complexity / 3), 2, 5));
+  const targetUniqueCount = rng.int(Math.max(1, minUniqueTarget), Math.max(1, maxUniqueTarget));
 
   const picked = [];
   const layers = [];
   for (let i = 0; i < layerCount; i += 1) {
-    const principleId = choosePrinciple(rng, picked);
+    const uniquePicked = Array.from(new Set(picked));
+    const unseenPrinciples = enabledPrinciples.filter((principleId) => !uniquePicked.includes(principleId));
+    const shouldIntroduceNew =
+      unseenPrinciples.length > 0 &&
+      uniquePicked.length < targetUniqueCount &&
+      (uniquePicked.length < 2 || i < 2 || rng.next() < 0.48);
+
+    let principleId = null;
+    if (shouldIntroduceNew) {
+      principleId = choosePrinciple(rng, picked, unseenPrinciples);
+    } else {
+      principleId = chooseExistingPrinciple(rng, picked) || choosePrinciple(rng, picked, enabledPrinciples);
+    }
+
     picked.push(principleId);
     layers.push(sampleLayer(principleId, rng, state.options));
   }
@@ -859,11 +929,13 @@ function buildIllusion(seed, parentId = null) {
 
   const complexitySignal = clamp(layerCount / 8 + state.options.complexity / 15, 0, 1);
   const contrastSignal = computeContrastMetric(palette);
+  const focusSignal = clamp(1 - Math.max(0, principles.length - 2) * 0.18 - Math.max(0, layerCount - 4) * 0.1, 0, 1);
   illusion.predictedAppeal = clamp(
-    0.26 +
-      preferenceSignal * 0.42 +
-      complexitySignal * 0.24 +
-      contrastSignal * 0.2 +
+    0.22 +
+      preferenceSignal * 0.38 +
+      complexitySignal * 0.18 +
+      contrastSignal * 0.17 +
+      focusSignal * 0.29 +
       rng.float(-0.06, 0.06),
     0,
     1
@@ -1096,11 +1168,94 @@ function navigateNextOrNew() {
 
 function renderResearchList() {
   researchListEl.innerHTML = "";
+  const enabledPrinciples = new Set(getEnabledPrinciples());
+  const singleEnabled = enabledPrinciples.size === 1;
+
+  if (researchMixMetaEl) {
+    researchMixMetaEl.textContent =
+      enabledPrinciples.size === 1
+        ? "1 family active. The last enabled family stays locked so generation remains possible."
+        : `${enabledPrinciples.size} families active. Narrower mixes usually produce stronger, cleaner illusions.`;
+  }
+
   for (const profile of researchPrinciples) {
     const li = document.createElement("li");
-    li.innerHTML = `<strong>${profile.name}</strong><span>${profile.mechanism}</span>`;
+    const enabled = enabledPrinciples.has(profile.id);
+    li.className = enabled ? "enabled" : "disabled";
+    li.innerHTML = `
+      <label class="research-toggle">
+        <input
+          type="checkbox"
+          data-principle-id="${profile.id}"
+          ${enabled ? "checked" : ""}
+          ${enabled && singleEnabled ? "disabled" : ""}
+        />
+        <span class="research-copy">
+          <strong>${profile.name}</strong>
+          <span>${profile.mechanism}</span>
+        </span>
+      </label>
+    `;
     researchListEl.append(li);
   }
+}
+
+function setPrincipleEnabled(principleId, enabled) {
+  const current = new Set(getEnabledPrinciples());
+  if (!researchById[principleId]) {
+    return;
+  }
+
+  if (enabled) {
+    current.add(principleId);
+  } else {
+    if (current.size === 1 && current.has(principleId)) {
+      return;
+    }
+    current.delete(principleId);
+  }
+
+  state.options.enabledPrinciples = normalizeEnabledPrinciples(Array.from(current));
+  renderResearchList();
+  persistState();
+}
+
+function sanitizeStoredDiscovery(item) {
+  const layers = sanitizeLayers(item.layers);
+  if (!item.id || !item.seed || !layers.length) {
+    return null;
+  }
+
+  const principles = Array.from(new Set(layers.map((layer) => layer.principleId)));
+  const normalized = {
+    ...item,
+    layers,
+    principles,
+    rating: Number(item.rating) || 0,
+    liked: Boolean(item.liked),
+    favorite: Boolean(item.favorite),
+    novelty: clamp(Number(item.novelty) || 0, 0, 1),
+    noveltyNearest: clamp(Number(item.noveltyNearest) || 0, 0, 1),
+    noveltyKnn: clamp(Number(item.noveltyKnn) || 0, 0, 1),
+    preferenceSignal: clamp(Number(item.preferenceSignal) || 0, 0, 1),
+    predictedAppeal: clamp(Number(item.predictedAppeal) || 0, 0, 1),
+    motionStrength: clamp(Number(item.motionStrength) || 0, 0, 1),
+    qualityScore: clamp(Number(item.qualityScore) || 0.55, 0, 1),
+    qualityMetrics:
+      item.qualityMetrics && typeof item.qualityMetrics === "object" ? item.qualityMetrics : null,
+    quickObjective: Number(item.quickObjective) || 0,
+    objective: Number(item.objective) || 0,
+    fixationAid:
+      item.fixationAid && typeof item.fixationAid === "object"
+        ? item.fixationAid
+        : needsFixationAid(principles)
+          ? makeFixationAid()
+          : null,
+  };
+
+  normalized.feature = buildFeatureVector(normalized);
+  normalized.compositeScore = Number(item.compositeScore) || computeCompositeScore(normalized);
+  return normalized;
 }
 
 function updateSessionStats() {
@@ -1219,6 +1374,9 @@ function restoreState() {
       state.options.complexity = clamp(Number(parsed.options.complexity) || 6, 1, 10);
       state.options.motion = clamp(Number(parsed.options.motion) || 4, 0, 10);
       state.options.noveltyBias = clamp(Number(parsed.options.noveltyBias) || 0.75, 0, 1);
+      state.options.enabledPrinciples = normalizeEnabledPrinciples(parsed.options.enabledPrinciples);
+    } else {
+      state.options.enabledPrinciples = normalizeEnabledPrinciples(state.options.enabledPrinciples);
     }
 
     if (parsed.preferenceModel && typeof parsed.preferenceModel === "object") {
@@ -1242,45 +1400,7 @@ function restoreState() {
     state.seedCounter = Number(parsed.seedCounter) || 0;
 
     if (Array.isArray(parsed.discoveries)) {
-      state.discoveries = parsed.discoveries
-        .map((item) => {
-          const normalized = {
-            ...item,
-            rating: Number(item.rating) || 0,
-            liked: Boolean(item.liked),
-            favorite: Boolean(item.favorite),
-            novelty: clamp(Number(item.novelty) || 0, 0, 1),
-            noveltyNearest: clamp(Number(item.noveltyNearest) || 0, 0, 1),
-            noveltyKnn: clamp(Number(item.noveltyKnn) || 0, 0, 1),
-            preferenceSignal: clamp(Number(item.preferenceSignal) || 0, 0, 1),
-            predictedAppeal: clamp(Number(item.predictedAppeal) || 0, 0, 1),
-            motionStrength: clamp(Number(item.motionStrength) || 0, 0, 1),
-            qualityScore: clamp(Number(item.qualityScore) || 0.55, 0, 1),
-            qualityMetrics:
-              item.qualityMetrics && typeof item.qualityMetrics === "object" ? item.qualityMetrics : null,
-            quickObjective: Number(item.quickObjective) || 0,
-            objective: Number(item.objective) || 0,
-            principles: Array.isArray(item.principles) ? item.principles : [],
-            fixationAid:
-              item.fixationAid && typeof item.fixationAid === "object"
-                ? item.fixationAid
-                : needsFixationAid(Array.isArray(item.principles) ? item.principles : [])
-                  ? makeFixationAid()
-                  : null,
-            layers: Array.isArray(item.layers) ? item.layers : [],
-            feature: Array.isArray(item.feature) ? item.feature : [],
-          };
-
-          if (!normalized.feature.length && normalized.layers.length) {
-            normalized.feature = buildFeatureVector(normalized);
-          }
-
-          normalized.compositeScore =
-            Number(item.compositeScore) || computeCompositeScore(normalized);
-          return normalized;
-        })
-        .filter((item) => item.id && item.seed && item.layers.length > 0)
-        .slice(0, MAX_DISCOVERIES);
+      state.discoveries = parsed.discoveries.map(sanitizeStoredDiscovery).filter(Boolean).slice(0, MAX_DISCOVERIES);
     }
 
     state.archiveVectors = state.discoveries.map((item) => ({
@@ -1936,57 +2056,6 @@ function drawHeringWarp(ctx, width, height, params, palette, time) {
   ctx.stroke();
 }
 
-function drawEbbinghausContext(ctx, width, height, params, palette, time) {
-  const centerRadius = Math.min(params.centerRadius, Math.min(width, height) * 0.16);
-  const offset = width * 0.24;
-  const leftX = width * 0.5 - offset;
-  const rightX = width * 0.5 + offset;
-  const y = height * 0.52;
-  const pulse = 1 + Math.sin(time * params.pulse * 3.2) * 0.035;
-
-  const bigScale = params.farScale;
-  const smallScale = params.nearScale;
-  const leftScale = params.invert ? smallScale : bigScale;
-  const rightScale = params.invert ? bigScale : smallScale;
-  const leftCount = params.invert ? params.nearCount : params.farCount;
-  const rightCount = params.invert ? params.farCount : params.nearCount;
-
-  function drawCluster(cx, cy, surroundScale, count, phaseSeed) {
-    const surroundRadius = Math.max(2, centerRadius * surroundScale * pulse);
-    const orbit = centerRadius + surroundRadius + centerRadius * params.ringGap;
-
-    for (let i = 0; i < count; i += 1) {
-      const theta = (i / count) * TAU + phaseSeed + Math.sin(time * params.pulse + i * 0.6) * 0.04;
-      const x = cx + Math.cos(theta) * orbit;
-      const yPos = cy + Math.sin(theta) * orbit;
-      ctx.beginPath();
-      ctx.arc(x, yPos, surroundRadius, 0, TAU);
-      ctx.fillStyle = cssTone(palette.accents[i % palette.accents.length], 0.44);
-      ctx.fill();
-      ctx.strokeStyle = cssTone(toneShift(palette.ink, 0, -18, -6), 0.45);
-      ctx.lineWidth = 1;
-      ctx.stroke();
-    }
-  }
-
-  drawCluster(leftX, y, leftScale, leftCount, 0.2);
-  drawCluster(rightX, y, rightScale, rightCount, -0.35);
-
-  ctx.fillStyle = cssTone(palette.ink, 0.94);
-  ctx.strokeStyle = cssTone(toneShift(palette.bgA, 0, -12, -18), 0.65);
-  ctx.lineWidth = Math.max(1.4, Math.min(width, height) * 0.003);
-
-  ctx.beginPath();
-  ctx.arc(leftX, y, centerRadius, 0, TAU);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.arc(rightX, y, centerRadius, 0, TAU);
-  ctx.fill();
-  ctx.stroke();
-}
-
 function drawMullerLyerField(ctx, width, height, params, palette, time) {
   const rows = params.rows;
   const usableTop = height * 0.12;
@@ -2371,6 +2440,14 @@ function bindEvents() {
     state.options.noveltyBias = Number(noveltyRange.value) / 100;
     syncControlReadouts();
     persistState();
+  });
+
+  researchListEl.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement) || target.type !== "checkbox") {
+      return;
+    }
+    setPrincipleEnabled(target.dataset.principleId, target.checked);
   });
 
   window.addEventListener("resize", () => {

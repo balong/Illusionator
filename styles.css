@@ -336,11 +336,45 @@ input[type="range"] {
   gap: 0.4rem;
 }
 
+.research-mix-meta {
+  margin: 0 0 0.5rem;
+  font-size: 0.68rem;
+  line-height: 1.35;
+  color: var(--ink-1);
+}
+
 .research-list li {
   border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: 10px;
-  padding: 0.46rem 0.5rem;
   background: rgba(255, 255, 255, 0.03);
+  transition: border-color 140ms ease, background 140ms ease, opacity 140ms ease;
+}
+
+.research-list li:hover {
+  border-color: rgba(66, 198, 182, 0.42);
+}
+
+.research-list li.disabled {
+  opacity: 0.74;
+}
+
+.research-toggle {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.55rem;
+  align-items: start;
+  width: 100%;
+  padding: 0.5rem;
+  cursor: pointer;
+}
+
+.research-toggle input {
+  margin: 0.18rem 0 0;
+  accent-color: var(--accent-b);
+}
+
+.research-copy {
+  min-width: 0;
 }
 
 .research-list strong {
