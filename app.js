@@ -7,6 +7,8 @@ const QUALITY_PROBE_WIDTH = 176;
 const QUALITY_PROBE_HEIGHT = 112;
 const QUALITY_PROBE_BUDGET = 20;
 const MIN_QUALITY_PASSES = 7;
+const COMPOSITION_WIDTH = 1100;
+const COMPOSITION_HEIGHT = 700;
 
 const viewerEl = document.getElementById("viewer");
 const canvas = document.getElementById("illusionCanvas");
@@ -1498,6 +1500,17 @@ function drawVignette(ctx, width, height, palette) {
   ctx.fillRect(0, 0, width, height);
 }
 
+function getCompositionFrame(width, height) {
+  const scale = Math.max(width / COMPOSITION_WIDTH, height / COMPOSITION_HEIGHT);
+  return {
+    width: COMPOSITION_WIDTH,
+    height: COMPOSITION_HEIGHT,
+    scale,
+    offsetX: (width - COMPOSITION_WIDTH * scale) / 2,
+    offsetY: (height - COMPOSITION_HEIGHT * scale) / 2,
+  };
+}
+
 function renderIllusion(illusion, targetCanvas, now = 0, staticFrame = false) {
   if (!illusion) {
     return;
@@ -1506,9 +1519,19 @@ function renderIllusion(illusion, targetCanvas, now = 0, staticFrame = false) {
   const width = targetCanvas.width;
   const height = targetCanvas.height;
   const time = (now / 1000) * (0.32 + illusion.motionStrength * 0.95);
+  const frame = getCompositionFrame(width, height);
+  const compositionWidth = frame.width;
+  const compositionHeight = frame.height;
 
   ctx.clearRect(0, 0, width, height);
-  drawBackground(ctx, width, height, illusion.palette);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, width, height);
+  ctx.clip();
+  ctx.translate(frame.offsetX, frame.offsetY);
+  ctx.scale(frame.scale, frame.scale);
+
+  drawBackground(ctx, compositionWidth, compositionHeight, illusion.palette);
 
   for (const layer of illusion.layers) {
     const profile = researchById[layer.principleId];
@@ -1520,16 +1543,25 @@ function renderIllusion(illusion, targetCanvas, now = 0, staticFrame = false) {
     ctx.globalAlpha = layer.alpha;
     ctx.globalCompositeOperation = layer.blend;
 
-    ctx.translate(width * (0.5 + layer.offsetX), height * (0.5 + layer.offsetY));
+    ctx.translate(compositionWidth * (0.5 + layer.offsetX), compositionHeight * (0.5 + layer.offsetY));
     ctx.rotate(layer.rotation);
     ctx.scale(layer.scale, layer.scale);
-    ctx.translate(-width * 0.5, -height * 0.5);
+    ctx.translate(-compositionWidth * 0.5, -compositionHeight * 0.5);
 
-    profile.draw(ctx, width, height, layer.params, illusion.palette, staticFrame ? 0 : time, illusion);
+    profile.draw(
+      ctx,
+      compositionWidth,
+      compositionHeight,
+      layer.params,
+      illusion.palette,
+      staticFrame ? 0 : time,
+      illusion
+    );
     ctx.restore();
   }
 
-  drawVignette(ctx, width, height, illusion.palette);
+  drawVignette(ctx, compositionWidth, compositionHeight, illusion.palette);
+  ctx.restore();
 }
 
 function drawWaveSet(ctx, width, height, config) {

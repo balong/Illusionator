@@ -392,11 +392,6 @@ input[type="range"] {
 }
 
 @media (max-width: 860px) {
-  #illusionCanvas {
-    width: min(100vw, calc(100svh * 1.5714285714));
-    height: min(100svh, calc(100vw / 1.5714285714));
-  }
-
   .menu-toggle {
     min-width: 64px;
     min-height: 40px;
