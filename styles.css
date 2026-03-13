@@ -131,12 +131,12 @@ output {
 }
 
 .nav-left {
-  left: max(10px, env(safe-area-inset-left));
+  left: env(safe-area-inset-left);
   border-radius: 0 14px 14px 0;
 }
 
 .nav-right {
-  right: max(10px, env(safe-area-inset-right));
+  right: env(safe-area-inset-right);
   border-radius: 14px 0 0 14px;
 }
 
