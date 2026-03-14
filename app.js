@@ -24,8 +24,7 @@ const sideMenuEl = document.getElementById("sideMenu");
 
 const prevBtn = document.getElementById("prevBtn");
 const nextBtn = document.getElementById("nextBtn");
-const likeBtn = document.getElementById("likeBtn");
-const favoriteBtn = document.getElementById("favoriteBtn");
+const saveBtn = document.getElementById("saveBtn");
 
 const complexityRange = document.getElementById("complexityRange");
 const motionRange = document.getElementById("motionRange");
@@ -40,7 +39,7 @@ const currentNoveltyEl = document.getElementById("currentNovelty");
 const currentPositionEl = document.getElementById("currentPosition");
 
 const discoveryCountEl = document.getElementById("discoveryCount");
-const favoriteCountEl = document.getElementById("favoriteCount");
+const savedCountEl = document.getElementById("savedCount");
 const autoplayStateEl = document.getElementById("autoplayState");
 
 const newBtn = document.getElementById("newBtn");
@@ -252,21 +251,6 @@ const researchPrinciples = [
     draw: drawTroxlerField,
   },
   {
-    id: "hering_warp",
-    name: "Hering Radial Warp",
-    mechanism:
-      "Radial context lines bias orientation coding, making straight lines appear bowed or warped.",
-    sample: (rng, options) => ({
-      rays: rng.int(28, 88 + options.complexity * 3),
-      rayBend: rng.float(0.06, 0.26),
-      raySpread: rng.float(0.95, 1.5),
-      offsetY: rng.float(-0.22, 0.22),
-      lineGap: rng.float(0.12, 0.3),
-      drift: rng.float(0.04, 0.38 + options.motion * 0.03),
-    }),
-    draw: drawHeringWarp,
-  },
-  {
     id: "muller_lyer_field",
     name: "Muller-Lyer Field",
     mechanism:
@@ -326,21 +310,6 @@ const researchPrinciples = [
       drift: rng.float(0.02, 0.2 + options.motion * 0.03),
     }),
     draw: drawWhiteLightness,
-  },
-  {
-    id: "delboeuf_rings",
-    name: "Delboeuf Rings",
-    mechanism:
-      "Relative ring surrounds alter perceived size of identical inner circles through contextual scaling.",
-    sample: (rng, options) => ({
-      pairs: rng.int(2, 6 + Math.floor(options.complexity / 3)),
-      innerRadius: rng.float(10, 30 + options.complexity * 1.6),
-      outerScaleA: rng.float(1.25, 1.75),
-      outerScaleB: rng.float(2.1, 3.3),
-      spacing: rng.float(0.18, 0.36),
-      wobble: rng.float(0.04, 0.26 + options.motion * 0.03),
-    }),
-    draw: drawDelboeufRings,
   },
 ];
 
@@ -864,9 +833,8 @@ function computeCompositeScore(illusion) {
   const noveltyScore = illusion.novelty * 2.6;
   const predictedScore = illusion.predictedAppeal * 1.4;
   const qualityScore = (illusion.qualityScore ?? 0.55) * 1.05;
-  const favoriteBonus = illusion.favorite ? 1.4 : 0;
-  const likeBonus = illusion.liked ? 0.9 : 0;
-  return ratingScore + noveltyScore + predictedScore + qualityScore + favoriteBonus + likeBonus;
+  const saveBonus = illusion.favorite ? 1.4 : 0;
+  return ratingScore + noveltyScore + predictedScore + qualityScore + saveBonus;
 }
 
 function buildIllusion(seed, parentId = null) {
@@ -916,7 +884,6 @@ function buildIllusion(seed, parentId = null) {
     motionStrength: state.options.motion / 10,
     qualityScore: 0.55,
     rating: 0,
-    liked: false,
     favorite: false,
     votes: 0,
   };
@@ -1178,8 +1145,8 @@ function renderResearchList() {
   if (researchMixMetaEl) {
     researchMixMetaEl.textContent =
       enabledPrinciples.size === 1
-        ? "1 family active. The last enabled family stays locked so generation remains possible."
-        : `${enabledPrinciples.size} families active. Narrower mixes usually produce stronger, cleaner illusions.`;
+        ? "1 type enabled. At least one type stays on so generation keeps working."
+        : `${enabledPrinciples.size} types enabled. Narrower mixes usually produce cleaner results.`;
   }
 
   for (const profile of researchPrinciples) {
@@ -1236,8 +1203,8 @@ function sanitizeStoredDiscovery(item) {
     layers,
     principles,
     rating: Number(item.rating) || 0,
-    liked: Boolean(item.liked),
-    favorite: Boolean(item.favorite),
+    liked: false,
+    favorite: Boolean(item.favorite || item.liked),
     novelty: clamp(Number(item.novelty) || 0, 0, 1),
     noveltyNearest: clamp(Number(item.noveltyNearest) || 0, 0, 1),
     noveltyKnn: clamp(Number(item.noveltyKnn) || 0, 0, 1),
@@ -1264,19 +1231,15 @@ function sanitizeStoredDiscovery(item) {
 
 function updateSessionStats() {
   discoveryCountEl.textContent = String(state.discoveries.length);
-  favoriteCountEl.textContent = String(state.discoveries.filter((item) => item.favorite).length);
+  savedCountEl.textContent = String(state.discoveries.filter((item) => item.favorite).length);
   autoplayStateEl.textContent = state.autoplay ? "On" : "Off";
   autoplayBtn.textContent = state.autoplay ? "Stop Autoplay" : "Start Autoplay";
 }
 
 function updateActionButtons(current) {
-  const isLiked = Boolean(current?.liked);
-  const isFavorite = Boolean(current?.favorite);
-
-  likeBtn.classList.toggle("active", isLiked);
-  favoriteBtn.classList.toggle("active", isFavorite);
-  likeBtn.innerHTML = isLiked ? "&#9829;" : "&#9825;";
-  favoriteBtn.innerHTML = isFavorite ? "&#9733;" : "&#9734;";
+  const isSaved = Boolean(current?.favorite);
+  saveBtn.classList.toggle("active", isSaved);
+  saveBtn.innerHTML = "&#9829;";
 }
 
 function updateMetaBar() {
@@ -1340,7 +1303,6 @@ function persistState() {
       qualityScore: item.qualityScore,
       qualityMetrics: item.qualityMetrics,
       rating: item.rating,
-      liked: item.liked,
       favorite: item.favorite,
       votes: item.votes,
       feature: item.feature,
@@ -1423,28 +1385,12 @@ function restoreState() {
   }
 }
 
-function toggleLike() {
+function toggleSave() {
   const current = getCurrentIllusion();
   if (!current) {
     return;
   }
 
-  const delta = current.liked ? -1 : 1;
-  current.liked = !current.liked;
-  current.rating = clamp(current.rating + delta, -9, 30);
-  current.votes += 1;
-  applyPreferenceFeedback(current.principles, delta);
-
-  current.compositeScore = computeCompositeScore(current);
-  updateInterface();
-  persistState();
-}
-
-function toggleFavorite() {
-  const current = getCurrentIllusion();
-  if (!current) {
-    return;
-  }
   current.favorite = !current.favorite;
   applyPreferenceFeedback(current.principles, current.favorite ? 0.7 : -0.45);
   current.compositeScore = computeCompositeScore(current);
@@ -2452,8 +2398,7 @@ function bindEvents() {
   autoplayBtn.addEventListener("click", toggleAutoplay);
   exportBtn.addEventListener("click", exportCurrentPng);
 
-  likeBtn.addEventListener("click", toggleLike);
-  favoriteBtn.addEventListener("click", toggleFavorite);
+  saveBtn.addEventListener("click", toggleSave);
   prevBtn.addEventListener("click", navigateOlder);
   nextBtn.addEventListener("click", navigateNextOrNew);
 

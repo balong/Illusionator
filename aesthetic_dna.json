@@ -1,0 +1,77 @@
+{
+  "project_name": "Mesmer",
+  "preset": "mesmeric-monochrome",
+  "preset_scores": {
+    "editorial": 0,
+    "playful": 0,
+    "brutalist": 0,
+    "futurist": 2
+  },
+  "palette": {
+    "background": "#010101",
+    "background_alt": "#0A0A0A",
+    "surface": "rgba(8, 8, 8, 0.84)",
+    "surface_elevated": "rgba(18, 18, 18, 0.92)",
+    "text": "#F4F1EA",
+    "text_muted": "#C8C2B8",
+    "text_low": "#7A746D",
+    "accent_primary": "#FFFFFF",
+    "accent_secondary": "#D9D4CC",
+    "accent_shadow": "#6A665F",
+    "border": "rgba(255, 255, 255, 0.2)"
+  },
+  "typography": {
+    "display": "Pirata One",
+    "ui": "Archivo Black",
+    "body": "IBM Plex Mono",
+    "mono": "IBM Plex Mono",
+    "display_usage": "Use only for the Mesmer wordmark, stretched thick and filled with animated black-and-white interference lines",
+    "body_usage": "Use bold, chunky uppercase typography for controls and section labels while keeping monospace available for telemetry if needed"
+  },
+  "layout": {
+    "density": "balanced",
+    "radius": "small-to-medium",
+    "grid": "fullscreen stage with edge-mounted glyph controls and a hidden seance drawer",
+    "composition": "The illusion remains full-bleed while interface layers feel like occult apparatus cut from shadow and bone, with a central wordmark altar, side runes for navigation, and a segmented metadata dock"
+  },
+  "motion": {
+    "intensity": 7,
+    "easing": "cubic-bezier(0.19, 1, 0.22, 1)",
+    "durations_ms": {
+      "fast": 140,
+      "base": 240,
+      "slow": 420
+    },
+    "principles": [
+      "Motion should feel like induction and fixation, not app chrome animation",
+      "Prefer slow iris reveals, pulse rings, and stark fades over colorful bloom effects",
+      "Keep the illusion canvas dominant and avoid UI motion that competes with the artwork"
+    ]
+  },
+  "voice": [
+    "Direct but incantatory microcopy",
+    "Scannable trance-state hierarchy",
+    "Distinct section contrast",
+    "Blend perceptual-science language with ritual and hypnosis cues without becoming camp"
+  ],
+  "component_direction": {
+    "buttons": "Use squared minimal controls with blackened fills, bone-white edges, and severe contrast",
+    "navigation": "Treat the viewport arrows as squared edge slabs cut into the sides of the field",
+    "panels": "Use squared shadow surfaces with thin pale borders and almost surgical clarity",
+    "background": "The canvas remains the main altered-state field; supporting surfaces should feel like seance apparatus, not dashboard furniture"
+  },
+  "texture": {
+    "lighting": "Black field with bone-white highlights, silver edge light, and faint eclipse halos",
+    "material": "Soot-black lacquer, smoke, film grain, and concentric sigil overlays",
+    "contrast_model": "Foreground must remain legible over intense moving artwork and severe atmospheric overlays"
+  },
+  "anti_style": [
+    "Avoid glassmorphism as primary UI treatment",
+    "Avoid default Inter/Roboto-only typography stacks",
+    "Avoid generic cyberpunk neon-on-black styling",
+    "Avoid colorful rainbow psychedelia as the main identity",
+    "Do not let occult ornament overpower legibility or flatten the illusion canvas",
+    "Avoid soft luxury minimalism that weakens the hypnosis atmosphere",
+    "Avoid generic SaaS dashboard panels and obvious app-store utility aesthetics"
+  ]
+}
