@@ -95,6 +95,75 @@ const researchPrinciples = [
     draw: drawMoireField,
   },
   {
+    id: "parallax_tile_drift",
+    name: "Parallax Tile Drift",
+    mechanism:
+      "Oversized translucent slabs slide across moving line fields so depth layers appear to shear past each other.",
+    fullScreenMotion: true,
+    sample: (rng, options) => ({
+      cols: rng.int(4, 8),
+      rows: rng.int(4, 7),
+      fieldSpacing: rng.float(12, 30 - options.complexity * 0.5),
+      fieldWidth: rng.float(3.5, 10 + options.complexity * 0.35),
+      fieldAngle: rng.float(-0.9, 0.9),
+      crossAngle: rng.float(0.18, 0.7) * rng.sign(),
+      fieldDrift: rng.float(0.16, 0.62 + options.motion * 0.08),
+      tileDrift: rng.float(0.12, 0.52 + options.motion * 0.06),
+      tileScale: rng.float(0.68, 1.08),
+      tilt: rng.float(0.04, 0.2),
+      corner: rng.float(0.04, 0.18),
+    }),
+    draw: drawParallaxTileDrift,
+  },
+  {
+    id: "barber_pole_shear",
+    name: "Barber Pole Shear",
+    mechanism:
+      "Stripe motion inside giant angled apertures conflicts with the outer slab direction, producing sliding and extrusion.",
+    fullScreenMotion: true,
+    alphaRange: [0.74, 0.9],
+    preferredBlends: ["source-over", "screen"],
+    sample: (rng, options) => ({
+      bands: rng.next() < 0.72 ? 3 : 2,
+      bandAngle: rng.float(-0.92, 0.92),
+      stripeAngle: rng.float(-0.08, 0.08),
+      stripeSpacing: rng.float(8.5, 12.5),
+      stripeWidth: rng.float(2.4, 4.2),
+      stripeDrift: rng.float(0.14, 0.24 + options.motion * 0.02),
+      backgroundSpacing: rng.float(28, 38),
+      backgroundDrift: rng.float(0.025, 0.07 + options.motion * 0.012),
+      slabHeight: rng.float(0.4, 0.52),
+      slabLength: rng.float(2.7, 3.3),
+      slabTravel: rng.float(0.06, 0.12 + options.motion * 0.012),
+      slabBob: rng.float(0.018, 0.038),
+      slabSway: rng.float(0.02, 0.05),
+      depthPulse: rng.float(0.025, 0.055),
+      laneOverlap: rng.float(0.58, 0.68),
+      corner: rng.float(0.08, 0.18),
+      ghosts: 1,
+    }),
+    draw: drawBarberPoleShear,
+  },
+  {
+    id: "caustic_wave_mesh",
+    name: "Caustic Wave Mesh",
+    mechanism:
+      "Several low-frequency line lattices drift out of phase, turning the whole frame into a breathing field of curvature.",
+    fullScreenMotion: true,
+    sample: (rng, options) => ({
+      spacing: rng.float(10, 22 - options.complexity * 0.35),
+      amplitude: rng.float(18, 54 + options.complexity * 4.5),
+      freq: rng.float(0.22, 0.68),
+      stroke: rng.float(0.55, 1.7),
+      angleA: rng.float(-0.85, 0.85),
+      angleB: rng.float(-0.85, 0.85),
+      angleC: rng.float(-0.85, 0.85),
+      drift: rng.float(0.16, 0.48 + options.motion * 0.05),
+      veilBands: rng.int(2, 6),
+    }),
+    draw: drawCausticWaveMesh,
+  },
+  {
     id: "cafe_wall",
     name: "Cafe Wall Distortion",
     mechanism:
@@ -315,6 +384,9 @@ const researchPrinciples = [
 
 const researchById = Object.fromEntries(researchPrinciples.map((item) => [item.id, item]));
 const allPrincipleIds = researchPrinciples.map((item) => item.id);
+const immersiveMotionPrincipleIds = researchPrinciples
+  .filter((item) => item.fullScreenMotion)
+  .map((item) => item.id);
 const blendModes = [
   "source-over",
   "screen",
@@ -368,6 +440,26 @@ function normalizeEnabledPrinciples(ids) {
     new Set(ids.filter((principleId) => typeof principleId === "string" && researchById[principleId]))
   );
   return normalized.length ? normalized : [...allPrincipleIds];
+}
+
+function mergeImmersiveMotionPrinciples(ids) {
+  const normalized = normalizeEnabledPrinciples(ids);
+  if (!Array.isArray(ids)) {
+    return normalized;
+  }
+
+  const broadPoolThreshold = Math.max(10, allPrincipleIds.length - immersiveMotionPrincipleIds.length - 2);
+  if (normalized.length < broadPoolThreshold) {
+    return normalized;
+  }
+
+  const expanded = [...normalized];
+  for (const principleId of immersiveMotionPrincipleIds) {
+    if (!expanded.includes(principleId)) {
+      expanded.push(principleId);
+    }
+  }
+  return expanded;
 }
 
 function getEnabledPrinciples() {
@@ -559,6 +651,7 @@ function choosePrinciple(rng, alreadyPicked = [], allowedIds = null) {
   const ids =
     Array.isArray(allowedIds) && allowedIds.length ? allowedIds : getEnabledPrinciples();
   const weights = ids.map((id) => {
+    const profile = researchById[id];
     const base = 1;
     const linearPref = getLinearPreference(id);
     let pairPref = 0;
@@ -567,7 +660,10 @@ function choosePrinciple(rng, alreadyPicked = [], allowedIds = null) {
       pairPref = sum / alreadyPicked.length;
     }
     const repeatPenalty = alreadyPicked.includes(id) ? 0.72 : 1;
-    return clamp((base + linearPref * 0.22 + pairPref * 0.2) * repeatPenalty, 0.2, 3.9);
+    const motionBoost = profile?.fullScreenMotion
+      ? 1 + state.options.motion * 0.08 + state.options.complexity * 0.04
+      : 1;
+    return clamp((base + linearPref * 0.22 + pairPref * 0.2) * repeatPenalty * motionBoost, 0.2, 4.8);
   });
   return weightedChoice(ids, weights, rng);
 }
@@ -589,12 +685,17 @@ function chooseExistingPrinciple(rng, alreadyPicked = []) {
 function sampleLayer(principleId, rng, options) {
   const profile = researchById[principleId];
   const params = profile.sample(rng, options);
+  const alphaRange = Array.isArray(profile.alphaRange) ? profile.alphaRange : [0.34, 0.92];
+  const allowedBlends =
+    Array.isArray(profile.preferredBlends) && profile.preferredBlends.length
+      ? profile.preferredBlends
+      : blendModes;
 
   return {
     principleId,
     params,
-    alpha: clamp(rng.float(0.34, 0.92), 0.25, 1),
-    blend: pick(blendModes, rng),
+    alpha: clamp(rng.float(alphaRange[0], alphaRange[1]), 0.25, 1),
+    blend: pick(allowedBlends, rng),
     rotation: rng.float(-0.3, 0.3),
     scale: rng.float(0.8, 1.16),
     offsetX: rng.float(-0.12, 0.12),
@@ -1340,7 +1441,7 @@ function restoreState() {
       state.options.complexity = clamp(Number(parsed.options.complexity) || 6, 1, 10);
       state.options.motion = clamp(Number(parsed.options.motion) || 4, 0, 10);
       state.options.noveltyBias = clamp(Number(parsed.options.noveltyBias) || 0.75, 0, 1);
-      state.options.enabledPrinciples = normalizeEnabledPrinciples(parsed.options.enabledPrinciples);
+      state.options.enabledPrinciples = mergeImmersiveMotionPrinciples(parsed.options.enabledPrinciples);
     } else {
       state.options.enabledPrinciples = normalizeEnabledPrinciples(state.options.enabledPrinciples);
     }
@@ -1844,6 +1945,258 @@ function drawStripeField(ctx, width, height, spacing, angle, stripeWidth, stripe
   }
 
   ctx.restore();
+}
+
+function drawStripePlane(ctx, width, height, spacing, angle, stripeWidth, stripeColor, backgroundColor = null, drift = 0) {
+  const span = Math.hypot(width, height) * 1.2;
+
+  ctx.save();
+  ctx.rotate(angle);
+
+  if (backgroundColor) {
+    ctx.fillStyle = backgroundColor;
+    ctx.fillRect(-span, -span, span * 2, span * 2);
+  }
+
+  ctx.fillStyle = stripeColor;
+  const step = Math.max(4, spacing);
+  const lineWidth = Math.max(1.5, stripeWidth);
+  const scroll = drift * step * 10;
+  for (let x = -span; x <= span; x += step) {
+    const wobble = Math.sin((x / step) * 0.66 + drift) * step * 0.16;
+    ctx.fillRect(x + scroll + wobble, -span, lineWidth, span * 2);
+  }
+
+  ctx.restore();
+}
+
+function drawCausticWaveMesh(ctx, width, height, params, palette, time, illusion) {
+  const base = toneShift(palette.bgA, 0, -14, -10);
+  ctx.fillStyle = cssTone(base, 0.98);
+  ctx.fillRect(0, 0, width, height);
+
+  const veilAngle = params.angleA * 0.45 + params.angleB * 0.2;
+  const veilSpan = Math.hypot(width, height);
+  const veilDrift = time * params.drift * veilSpan * 0.08;
+  ctx.save();
+  ctx.translate(width * 0.5, height * 0.5);
+  ctx.rotate(veilAngle);
+  ctx.translate(-width * 0.5, -height * 0.5);
+  for (let i = -1; i <= params.veilBands; i += 1) {
+    const bandWidth = veilSpan / Math.max(3, params.veilBands + 1);
+    const x = i * bandWidth + veilDrift;
+    const gradient = ctx.createLinearGradient(x, 0, x + bandWidth, 0);
+    gradient.addColorStop(0, cssTone(palette.accents[i & 3], 0));
+    gradient.addColorStop(0.5, cssTone(toneShift(palette.accents[(i + 1) & 3], 0, -12, 6), 0.08));
+    gradient.addColorStop(1, cssTone(palette.accents[(i + 2) & 3], 0));
+    ctx.fillStyle = gradient;
+    ctx.fillRect(x, -veilSpan * 0.35, bandWidth, veilSpan * 1.7);
+  }
+  ctx.restore();
+
+  const phase = time * params.drift * (0.65 + illusion.motionStrength);
+  drawWaveSet(ctx, width, height, {
+    angle: params.angleA,
+    spacing: params.spacing,
+    amplitude: params.amplitude,
+    freq: params.freq,
+    phase,
+    stroke: params.stroke,
+    color: cssTone(palette.accents[0], 0.42),
+  });
+  drawWaveSet(ctx, width, height, {
+    angle: params.angleB,
+    spacing: params.spacing * 0.95,
+    amplitude: params.amplitude * 0.88,
+    freq: params.freq * 1.15,
+    phase: -phase * 1.2,
+    stroke: params.stroke * 0.96,
+    color: cssTone(palette.accents[2], 0.34),
+  });
+  drawWaveSet(ctx, width, height, {
+    angle: params.angleC,
+    spacing: params.spacing * 1.12,
+    amplitude: params.amplitude * 0.74,
+    freq: params.freq * 0.82,
+    phase: phase * 0.72 + Math.PI * 0.25,
+    stroke: params.stroke * 0.9,
+    color: cssTone(toneShift(palette.ink, 0, -24, -10), 0.22),
+  });
+}
+
+function drawParallaxTileDrift(ctx, width, height, params, palette, time) {
+  const darkBase = toneShift(palette.bgA, 0, -12, -10);
+  drawStripeField(
+    ctx,
+    width,
+    height,
+    params.fieldSpacing,
+    params.fieldAngle,
+    params.fieldWidth,
+    cssTone(palette.accents[2], 0.2),
+    cssTone(darkBase, 0.98),
+    time * params.fieldDrift
+  );
+  drawStripeField(
+    ctx,
+    width,
+    height,
+    params.fieldSpacing * 1.16,
+    params.fieldAngle + params.crossAngle,
+    params.fieldWidth * 0.36,
+    cssTone(palette.accents[0], 0.14),
+    cssTone(darkBase, 0),
+    -time * params.fieldDrift * 0.7
+  );
+
+  const tileW = width / params.cols;
+  const tileH = height / params.rows;
+  const depths = [
+    { tone: palette.accents[3], alpha: 0.1, scale: 0.92, drift: -0.72 },
+    { tone: palette.ink, alpha: 0.16, scale: 1.04, drift: 1 },
+    { tone: palette.accents[1], alpha: 0.12, scale: 0.78, drift: -1.26 },
+  ];
+  const driftAngle = params.fieldAngle + params.crossAngle * 0.4;
+  const driftUnitX = Math.cos(driftAngle);
+  const driftUnitY = Math.sin(driftAngle);
+
+  for (let depth = 0; depth < depths.length; depth += 1) {
+    const profile = depths[depth];
+    const slide = time * params.tileDrift * tileW * profile.drift;
+    const shiftX = driftUnitX * slide;
+    const shiftY = driftUnitY * slide;
+    for (let row = -2; row <= params.rows + 1; row += 1) {
+      for (let col = -2; col <= params.cols + 1; col += 1) {
+        const noiseA = Math.sin((row + 1) * 3.41 + (col + 1) * 1.73 + depth * 2.11) * 0.5 + 0.5;
+        const noiseB = Math.cos((row + 1) * 1.87 - (col + 1) * 2.31 + depth * 1.17) * 0.5 + 0.5;
+        const panelW = tileW * profile.scale * (0.66 + noiseA * params.tileScale * 0.72);
+        const panelH = tileH * (0.44 + noiseB * 0.88);
+        const x = (col + 0.5) * tileW + shiftX + Math.sin(row * 0.62 + depth) * tileW * 0.22;
+        const y = (row + 0.5) * tileH + shiftY + Math.cos(col * 0.58 + depth) * tileH * 0.16;
+        const rotation = params.tilt * (noiseA - 0.5) * (depth % 2 === 0 ? -1 : 1);
+
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(rotation);
+        pathRoundedRect(
+          ctx,
+          -panelW * 0.5,
+          -panelH * 0.5,
+          panelW,
+          panelH,
+          Math.min(panelW, panelH) * params.corner
+        );
+        ctx.fillStyle = cssTone(profile.tone, profile.alpha + noiseB * 0.06);
+        ctx.fill();
+        ctx.strokeStyle = cssTone(toneShift(profile.tone, 0, -18, 12), 0.12 + noiseA * 0.08);
+        ctx.lineWidth = Math.max(1, Math.min(width, height) * 0.0018);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+  }
+}
+
+function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion) {
+  const darkBase = toneShift(palette.bgA, 0, -24, -12);
+  const backgroundLine = toneShift(palette.ink, 0, -22, -6);
+  const slabFillBase = toneShift(palette.bgB, 0, -24, -10);
+  const accentPairs = [
+    [toneShift(palette.accents[0], 0, 6, 10), toneShift(palette.accents[2], 0, -2, 6)],
+    [toneShift(palette.accents[1], 0, 4, 8), toneShift(palette.accents[3], 0, -4, 10)],
+  ];
+  drawStripeField(
+    ctx,
+    width,
+    height,
+    params.backgroundSpacing,
+    params.bandAngle + Math.PI * 0.5,
+    params.backgroundSpacing * 0.2,
+    cssTone(backgroundLine, 0.08),
+    cssTone(darkBase, 0.98),
+    time * params.backgroundDrift
+  );
+
+  const span = Math.hypot(width, height);
+  const axisX = Math.cos(params.bandAngle);
+  const axisY = Math.sin(params.bandAngle);
+  const normalX = -axisY;
+  const normalY = axisX;
+  const slabW = span * params.slabLength;
+  const baseSlabH = height * params.slabHeight;
+  const laneStep = baseSlabH * params.laneOverlap;
+  const centerX = width * 0.5;
+  const centerY = height * 0.5;
+  const lanePattern = params.bands === 2 ? [-0.46, 0.46] : [-0.72, 0, 0.72];
+
+  for (let i = 0; i < params.bands; i += 1) {
+    const direction = i % 2 === 0 ? 1 : -1;
+    const motionPhase = time * params.slabTravel * (0.42 + illusion.motionStrength * 0.18) + i * 1.05;
+    const bob = Math.sin(motionPhase) * height * params.slabBob * direction;
+    const sway = Math.cos(motionPhase * 0.78 + i * 0.33) * width * params.slabSway * direction;
+    const depthScale = 1 + Math.cos(motionPhase * 0.92 + i * 0.4) * params.depthPulse;
+    const slabH = baseSlabH * depthScale;
+    const laneOffset = lanePattern[i] * laneStep;
+    const cx = centerX + normalX * laneOffset + sway;
+    const cy = centerY + normalY * laneOffset * 0.68 + bob;
+    const angle = params.bandAngle;
+    const corner = Math.min(slabW, slabH) * params.corner;
+    const [primaryStripe, secondaryStripe] = accentPairs[i % accentPairs.length];
+    const slabFill = toneShift(slabFillBase, primaryStripe.h - slabFillBase.h, 6, -2);
+    const rimTone = toneShift(primaryStripe, 0, -18, 14);
+    const frameAlpha = 0.012 + (depthScale - 1 + params.depthPulse) * 0.06;
+    const stripePhase = time * params.stripeDrift * (0.58 + illusion.motionStrength * 0.24);
+    const primaryStripeDrift = direction * stripePhase;
+    const secondaryStripeDrift = -direction * stripePhase * 0.82;
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angle);
+    ctx.scale(depthScale, depthScale);
+
+    for (let ghost = params.ghosts; ghost >= 1; ghost -= 1) {
+      const ghostOffset = ghost * span * 0.05 * direction;
+      pathRoundedRect(ctx, -slabW * 0.5 + ghostOffset, -slabH * 0.5, slabW, slabH, corner);
+      ctx.strokeStyle = cssTone(rimTone, 0.06);
+      ctx.lineWidth = Math.max(1, Math.min(width, height) * 0.0016);
+      ctx.stroke();
+    }
+
+    pathRoundedRect(ctx, -slabW * 0.5, -slabH * 0.5, slabW, slabH, corner);
+    ctx.save();
+    ctx.clip();
+    drawStripePlane(
+      ctx,
+      slabW,
+      slabH,
+      params.stripeSpacing,
+      params.stripeAngle + direction * 0.025,
+      params.stripeWidth,
+      cssTone(primaryStripe, 0.92),
+      cssTone(slabFill, 0.46),
+      primaryStripeDrift
+    );
+    drawStripePlane(
+      ctx,
+      slabW,
+      slabH,
+      params.stripeSpacing * 1.08,
+      params.stripeAngle - direction * 0.035,
+      params.stripeWidth * 0.72,
+      cssTone(secondaryStripe, 0.38),
+      null,
+      secondaryStripeDrift
+    );
+    ctx.restore();
+
+    pathRoundedRect(ctx, -slabW * 0.5, -slabH * 0.5, slabW, slabH, corner);
+    ctx.fillStyle = cssTone(palette.ink, frameAlpha);
+    ctx.fill();
+    ctx.strokeStyle = cssTone(rimTone, 0.18);
+    ctx.lineWidth = Math.max(1.2, Math.min(width, height) * 0.0022);
+    ctx.stroke();
+    ctx.restore();
+  }
 }
 
 function drawPinnaBrelstaff(ctx, width, height, params, palette, time) {
