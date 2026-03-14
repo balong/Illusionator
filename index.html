@@ -3,110 +3,133 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>Illusionator Infinity</title>
+    <title>Mesmer</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <main id="viewer" class="viewer" aria-label="Optical illusion viewer">
       <canvas id="illusionCanvas" aria-label="Generated optical illusion"></canvas>
+      <div class="field-haze" aria-hidden="true"></div>
+      <div class="hypnosis-grid" aria-hidden="true"></div>
 
-      <button id="menuToggleBtn" class="circle-btn menu-toggle" aria-controls="sideMenu" aria-expanded="false">
-        Menu
-      </button>
+      <div class="viewer-shell">
+        <header class="top-bar">
+          <button id="menuToggleBtn" class="sigil-btn menu-toggle" aria-controls="sideMenu" aria-expanded="false">
+            Menu
+          </button>
 
-      <div class="action-cluster">
-        <button id="likeBtn" class="circle-btn action-btn" type="button" aria-label="Like illusion" title="Like">
-          &#9825;
-        </button>
-        <button id="favoriteBtn" class="circle-btn action-btn" type="button" aria-label="Favorite illusion" title="Favorite">
-          &#9734;
-        </button>
+          <div class="action-cluster" aria-label="Curation controls">
+            <button id="saveBtn" class="sigil-btn action-btn" type="button" aria-label="Save design" title="Save design">
+              &#9829;
+            </button>
+          </div>
+        </header>
+
+        <div class="nav-runes" aria-label="Navigation">
+          <button id="prevBtn" class="nav-btn nav-left" type="button" aria-label="Previous illusion" title="Previous">
+            &lt;
+          </button>
+          <button id="nextBtn" class="nav-btn nav-right" type="button" aria-label="Next or new illusion" title="Next or New">
+            &gt;
+          </button>
+        </div>
+
+        <footer class="bottom-dock">
+          <div class="bottom-meta">
+            <span id="currentPosition">1 / 1</span>
+            <span id="currentSeed">Seed -</span>
+            <span id="currentNovelty">Novelty -</span>
+          </div>
+
+          <div class="swipe-hint">Swipe left or right on mobile</div>
+        </footer>
       </div>
-
-      <button id="prevBtn" class="nav-btn nav-left" type="button" aria-label="Previous illusion" title="Previous">
-        &#10094;
-      </button>
-      <button id="nextBtn" class="nav-btn nav-right" type="button" aria-label="Next or new illusion" title="Next or New">
-        &#10095;
-      </button>
-
-      <div class="bottom-meta">
-        <span id="currentPosition">1 / 1</span>
-        <span id="currentSeed">Seed -</span>
-        <span id="currentNovelty">Novelty -</span>
-      </div>
-
-      <div class="swipe-hint">Swipe left or right on mobile</div>
     </main>
 
     <div id="menuBackdrop" class="menu-backdrop" hidden></div>
 
     <aside id="sideMenu" class="side-menu" aria-hidden="true">
-      <div class="menu-head">
-        <h1>Illusionator</h1>
-        <button id="menuCloseBtn" class="circle-btn close-btn" type="button" aria-label="Close menu">Close</button>
+        <div class="drawer-sigil" aria-hidden="true"></div>
+      <div class="drawer-inner">
+        <div class="menu-head">
+          <div class="menu-title-block">
+            <div class="logo-lockup menu-logo-lockup" aria-label="Mesmer identity">
+              <h1 class="logo-wordmark" data-text="Mesmer">Mesmer</h1>
+            </div>
+          </div>
+          <button id="menuCloseBtn" class="sigil-btn close-btn" type="button" aria-label="Close menu">&times;</button>
+        </div>
+
+        <section class="menu-block">
+          <span class="section-kicker">Session</span>
+          <h2>Saved Designs</h2>
+          <div class="session-stats">
+            <div>
+              <span>Designs</span>
+              <strong id="discoveryCount">0</strong>
+            </div>
+            <div>
+              <span>Saved</span>
+              <strong id="savedCount">0</strong>
+            </div>
+            <div>
+              <span>Autoplay</span>
+              <strong id="autoplayState">Off</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="menu-block">
+          <span class="section-kicker">Actions</span>
+          <h2>Create Designs</h2>
+          <div class="control-grid">
+            <button id="newBtn" type="button">Generate New</button>
+            <button id="evolveBtn" type="button">Evolve Current</button>
+            <button id="batchBtn" type="button">Generate Batch</button>
+            <button id="autoplayBtn" type="button">Start Autoplay</button>
+            <button id="exportBtn" type="button">Export PNG</button>
+          </div>
+        </section>
+
+        <section class="menu-block">
+          <span class="section-kicker">Settings</span>
+          <h2>Generation Controls</h2>
+
+          <div class="range-block">
+            <label class="slider-row" for="complexityRange">
+              <span>Complexity</span>
+              <output id="complexityValue">6</output>
+            </label>
+            <p class="range-note">Adjust how dense and layered each design becomes.</p>
+            <input id="complexityRange" type="range" min="1" max="10" step="1" value="6" />
+          </div>
+
+          <div class="range-block">
+            <label class="slider-row" for="motionRange">
+              <span>Motion Intensity</span>
+              <output id="motionValue">4</output>
+            </label>
+            <p class="range-note">Adjust animation and movement strength.</p>
+            <input id="motionRange" type="range" min="0" max="10" step="1" value="4" />
+          </div>
+
+          <div class="range-block">
+            <label class="slider-row" for="noveltyRange">
+              <span>Novelty Bias</span>
+              <output id="noveltyValue">75%</output>
+            </label>
+            <p class="range-note">Push results toward more unusual combinations.</p>
+            <input id="noveltyRange" type="range" min="0" max="100" step="1" value="75" />
+          </div>
+        </section>
+
+        <section class="menu-block">
+          <span class="section-kicker">Sources</span>
+          <h2>Illusion Types</h2>
+          <p id="researchMixMeta" class="research-mix-meta"></p>
+          <ul id="researchList" class="research-list"></ul>
+        </section>
       </div>
-
-      <p class="menu-copy">
-        Fine tune generation and navigation. Keyboard: Left and Right arrows move through illusions.
-      </p>
-
-      <section class="menu-block">
-        <h2>Session</h2>
-        <div class="session-stats">
-          <div>
-            <span>Discoveries</span>
-            <strong id="discoveryCount">0</strong>
-          </div>
-          <div>
-            <span>Favorites</span>
-            <strong id="favoriteCount">0</strong>
-          </div>
-          <div>
-            <span>Autoplay</span>
-            <strong id="autoplayState">Off</strong>
-          </div>
-        </div>
-      </section>
-
-      <section class="menu-block">
-        <h2>Controls</h2>
-        <div class="control-grid">
-          <button id="newBtn" type="button">Generate New</button>
-          <button id="evolveBtn" type="button">Evolve Current</button>
-          <button id="batchBtn" type="button">Generate Batch</button>
-          <button id="autoplayBtn" type="button">Start Autoplay</button>
-          <button id="exportBtn" type="button">Export PNG</button>
-        </div>
-      </section>
-
-      <section class="menu-block">
-        <h2>Finer Adjustments</h2>
-
-        <label class="slider-row" for="complexityRange">
-          <span>Complexity</span>
-          <output id="complexityValue">6</output>
-        </label>
-        <input id="complexityRange" type="range" min="1" max="10" step="1" value="6" />
-
-        <label class="slider-row" for="motionRange">
-          <span>Motion Intensity</span>
-          <output id="motionValue">4</output>
-        </label>
-        <input id="motionRange" type="range" min="0" max="10" step="1" value="4" />
-
-        <label class="slider-row" for="noveltyRange">
-          <span>Novelty Bias</span>
-          <output id="noveltyValue">75%</output>
-        </label>
-        <input id="noveltyRange" type="range" min="0" max="100" step="1" value="75" />
-      </section>
-
-      <section class="menu-block">
-        <h2>Research Mix</h2>
-        <p id="researchMixMeta" class="research-mix-meta"></p>
-        <ul id="researchList" class="research-list"></ul>
-      </section>
     </aside>
 
     <script src="./app.js" defer></script>
