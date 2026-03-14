@@ -9,6 +9,8 @@ const QUALITY_PROBE_BUDGET = 20;
 const MIN_QUALITY_PASSES = 7;
 const COMPOSITION_WIDTH = 1100;
 const COMPOSITION_HEIGHT = 700;
+const MOBILE_COMPOSITION_SCALE = 1.18;
+const MOBILE_VIEWPORT_MAX = 900;
 
 const viewerEl = document.getElementById("viewer");
 const canvas = document.getElementById("illusionCanvas");
@@ -1500,14 +1502,28 @@ function drawVignette(ctx, width, height, palette) {
   ctx.fillRect(0, 0, width, height);
 }
 
-function getCompositionFrame(width, height) {
-  const scale = Math.max(width / COMPOSITION_WIDTH, height / COMPOSITION_HEIGHT);
+function getViewportCompositionScale(targetCanvas, width, height) {
+  if (targetCanvas !== canvas) {
+    return 1;
+  }
+
+  const dpr = window.devicePixelRatio || 1;
+  const cssWidth = width / dpr;
+  const cssHeight = height / dpr;
+  return Math.min(cssWidth, cssHeight) <= MOBILE_VIEWPORT_MAX ? MOBILE_COMPOSITION_SCALE : 1;
+}
+
+function getCompositionFrame(targetCanvas, width, height) {
+  const compositionScale = getViewportCompositionScale(targetCanvas, width, height);
+  const compositionWidth = COMPOSITION_WIDTH * compositionScale;
+  const compositionHeight = COMPOSITION_HEIGHT * compositionScale;
+  const scale = Math.max(width / compositionWidth, height / compositionHeight);
   return {
-    width: COMPOSITION_WIDTH,
-    height: COMPOSITION_HEIGHT,
+    width: compositionWidth,
+    height: compositionHeight,
     scale,
-    offsetX: (width - COMPOSITION_WIDTH * scale) / 2,
-    offsetY: (height - COMPOSITION_HEIGHT * scale) / 2,
+    offsetX: (width - compositionWidth * scale) / 2,
+    offsetY: (height - compositionHeight * scale) / 2,
   };
 }
 
@@ -1519,7 +1535,7 @@ function renderIllusion(illusion, targetCanvas, now = 0, staticFrame = false) {
   const width = targetCanvas.width;
   const height = targetCanvas.height;
   const time = (now / 1000) * (0.32 + illusion.motionStrength * 0.95);
-  const frame = getCompositionFrame(width, height);
+  const frame = getCompositionFrame(targetCanvas, width, height);
   const compositionWidth = frame.width;
   const compositionHeight = frame.height;
 
