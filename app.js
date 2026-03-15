@@ -82,6 +82,7 @@ const qualityProbeCanvas = document.createElement("canvas");
 qualityProbeCanvas.width = QUALITY_PROBE_WIDTH;
 qualityProbeCanvas.height = QUALITY_PROBE_HEIGHT;
 const stripeTileCache = new Map();
+const stripeSpriteCache = new Map();
 
 const researchPrinciples = [
   {
@@ -1976,6 +1977,53 @@ function getStripeTile(spacing, stripeWidth, stripeColor, backgroundColor = null
   return tile;
 }
 
+function getStripeSprite(width, height, spacing, stripeWidth, stripeColor, backgroundColor = null) {
+  const drawWidth = Math.max(1, Math.ceil(width));
+  const drawHeight = Math.max(1, Math.ceil(height));
+  const step = Math.max(4, spacing);
+  const lineWidth = Math.max(1.5, stripeWidth);
+  const period = step;
+  const spriteWidth = Math.max(drawWidth + Math.ceil(period + lineWidth * 2), 2);
+  const key = [
+    drawWidth,
+    drawHeight,
+    step.toFixed(2),
+    lineWidth.toFixed(2),
+    stripeColor,
+    backgroundColor || "",
+  ].join("|");
+
+  if (stripeSpriteCache.has(key)) {
+    return stripeSpriteCache.get(key);
+  }
+
+  const sprite = document.createElement("canvas");
+  sprite.width = spriteWidth;
+  sprite.height = drawHeight;
+  const spriteCtx = sprite.getContext("2d");
+
+  if (backgroundColor) {
+    spriteCtx.fillStyle = backgroundColor;
+    spriteCtx.fillRect(0, 0, spriteWidth, drawHeight);
+  } else {
+    spriteCtx.clearRect(0, 0, spriteWidth, drawHeight);
+  }
+
+  spriteCtx.fillStyle = stripeColor;
+  for (let x = 0; x <= spriteWidth + step; x += step) {
+    spriteCtx.fillRect(x, 0, lineWidth, drawHeight);
+  }
+
+  const cached = {
+    canvas: sprite,
+    period,
+    drawWidth,
+    drawHeight,
+  };
+  stripeSpriteCache.set(key, cached);
+  return cached;
+}
+
 function fillStripePattern(ctx, width, height, spacing, angle, stripeWidth, stripeColor, backgroundColor = null, drift = 0, driftFactor = 10) {
   const span = Math.hypot(width, height) * 1.2;
   const step = Math.max(4, spacing);
@@ -2005,6 +2053,26 @@ function fillStripePattern(ctx, width, height, spacing, angle, stripeWidth, stri
     }
   }
 
+  ctx.restore();
+}
+
+function drawStripeSprite(ctx, width, height, spacing, angle, stripeWidth, stripeColor, backgroundColor = null, drift = 0, driftFactor = 10) {
+  const sprite = getStripeSprite(width, height, spacing, stripeWidth, stripeColor, backgroundColor);
+  const scroll = ((drift * sprite.period * driftFactor) % sprite.period + sprite.period) % sprite.period;
+
+  ctx.save();
+  ctx.rotate(angle);
+  ctx.drawImage(
+    sprite.canvas,
+    scroll,
+    0,
+    sprite.drawWidth,
+    sprite.drawHeight,
+    -width * 0.5,
+    -height * 0.5,
+    width,
+    height
+  );
   ctx.restore();
 }
 
@@ -2257,17 +2325,31 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
     pathRoundedRect(ctx, -slabW * 0.5, -slabH * 0.5, slabW, slabH, corner);
     ctx.save();
     ctx.clip();
-    fillStripePattern(
-      ctx,
-      slabW,
-      slabH,
-      params.stripeSpacing,
-      params.stripeAngle + direction * 0.025,
-      params.stripeWidth,
-      cssTone(primaryStripe, 0.92),
-      cssTone(slabFill, 0.46),
-      primaryStripeDrift
-    );
+    if (compactRender) {
+      drawStripeSprite(
+        ctx,
+        slabW,
+        slabH,
+        params.stripeSpacing,
+        params.stripeAngle + direction * 0.025,
+        params.stripeWidth,
+        cssTone(primaryStripe, 0.92),
+        cssTone(slabFill, 0.46),
+        primaryStripeDrift
+      );
+    } else {
+      fillStripePattern(
+        ctx,
+        slabW,
+        slabH,
+        params.stripeSpacing,
+        params.stripeAngle + direction * 0.025,
+        params.stripeWidth,
+        cssTone(primaryStripe, 0.92),
+        cssTone(slabFill, 0.46),
+        primaryStripeDrift
+      );
+    }
     if (!compactRender) {
       fillStripePattern(
         ctx,
