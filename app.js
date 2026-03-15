@@ -9,7 +9,10 @@ const QUALITY_PROBE_BUDGET = 20;
 const MIN_QUALITY_PASSES = 7;
 const COMPOSITION_WIDTH = 1100;
 const COMPOSITION_HEIGHT = 700;
+const MOBILE_COMPOSITION_SCALE = 1.18;
+const MOBILE_VIEWPORT_MAX = 900;
 const MAX_RENDER_DPR = 2;
+const MOBILE_RENDER_DPR = 1.25;
 const EXPORT_SCALE = 2;
 
 const viewerEl = document.getElementById("viewer");
@@ -1488,7 +1491,13 @@ function toggleFavorite() {
 
 function resizeCanvas() {
   const rect = canvas.getBoundingClientRect();
-  const dpr = Math.min(window.devicePixelRatio || 1, MAX_RENDER_DPR);
+  const compactViewport = Math.min(rect.width || COMPOSITION_WIDTH, rect.height || COMPOSITION_HEIGHT) <= MOBILE_VIEWPORT_MAX;
+  const coarsePointer =
+    window.matchMedia("(pointer: coarse)").matches ||
+    window.matchMedia("(hover: none)").matches ||
+    (navigator.maxTouchPoints || 0) > 0;
+  const dprCap = compactViewport && coarsePointer ? MOBILE_RENDER_DPR : MAX_RENDER_DPR;
+  const dpr = Math.min(window.devicePixelRatio || 1, dprCap);
 
   const targetWidth = Math.max(320, Math.round(rect.width * dpr));
   const targetHeight = Math.max(220, Math.round(rect.height * dpr));
@@ -1536,9 +1545,21 @@ function drawVignette(ctx, width, height, palette) {
   ctx.fillRect(0, 0, width, height);
 }
 
+function getViewportCompositionScale(targetCanvas, width, height) {
+  if (targetCanvas !== canvas) {
+    return 1;
+  }
+
+  const dpr = window.devicePixelRatio || 1;
+  const cssWidth = width / dpr;
+  const cssHeight = height / dpr;
+  return Math.min(cssWidth, cssHeight) <= MOBILE_VIEWPORT_MAX ? MOBILE_COMPOSITION_SCALE : 1;
+}
+
 function getCompositionFrame(targetCanvas, width, height) {
-  const compositionWidth = COMPOSITION_WIDTH;
-  const compositionHeight = COMPOSITION_HEIGHT;
+  const compositionScale = getViewportCompositionScale(targetCanvas, width, height);
+  const compositionWidth = COMPOSITION_WIDTH * compositionScale;
+  const compositionHeight = COMPOSITION_HEIGHT * compositionScale;
   const scale = Math.max(width / compositionWidth, height / compositionHeight);
   return {
     width: compositionWidth,
