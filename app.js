@@ -11,6 +11,9 @@ const COMPOSITION_WIDTH = 1100;
 const COMPOSITION_HEIGHT = 700;
 const MOBILE_COMPOSITION_SCALE = 1.18;
 const MOBILE_VIEWPORT_MAX = 900;
+const APP_MODE_GENERATOR = "generator";
+const APP_MODE_COMPOSER = "composer";
+const DEFAULT_COMPOSER_MENU_WIDTH = 980;
 
 const viewerEl = document.getElementById("viewer");
 const canvas = document.getElementById("illusionCanvas");
@@ -21,6 +24,7 @@ const menuToggleBtn = document.getElementById("menuToggleBtn");
 const menuCloseBtn = document.getElementById("menuCloseBtn");
 const menuBackdrop = document.getElementById("menuBackdrop");
 const sideMenuEl = document.getElementById("sideMenu");
+const composerResizeHandleEl = document.getElementById("composerResizeHandle");
 
 const prevBtn = document.getElementById("prevBtn");
 const nextBtn = document.getElementById("nextBtn");
@@ -38,6 +42,9 @@ const currentSeedEl = document.getElementById("currentSeed");
 const currentNoveltyEl = document.getElementById("currentNovelty");
 const currentPositionEl = document.getElementById("currentPosition");
 
+const discoveryCountLabelEl = document.getElementById("discoveryCountLabel");
+const savedCountLabelEl = document.getElementById("savedCountLabel");
+const autoplayStateLabelEl = document.getElementById("autoplayStateLabel");
 const discoveryCountEl = document.getElementById("discoveryCount");
 const savedCountEl = document.getElementById("savedCount");
 const autoplayStateEl = document.getElementById("autoplayState");
@@ -47,6 +54,24 @@ const evolveBtn = document.getElementById("evolveBtn");
 const batchBtn = document.getElementById("batchBtn");
 const autoplayBtn = document.getElementById("autoplayBtn");
 const exportBtn = document.getElementById("exportBtn");
+const shareBtn = document.getElementById("shareBtn");
+const generatorModeBtn = document.getElementById("generatorModeBtn");
+const composerModeBtn = document.getElementById("composerModeBtn");
+const modePanelEls = Array.from(document.querySelectorAll("[data-mode-panel]"));
+
+const composerPanelEl = document.getElementById("composerPanel");
+const customNameInput = document.getElementById("customNameInput");
+const customBackgroundInput = document.getElementById("customBackgroundInput");
+const customSchemeSelect = document.getElementById("customSchemeSelect");
+const customNewBtn = document.getElementById("customNewBtn");
+const customSaveBtn = document.getElementById("customSaveBtn");
+const customShareBtn = document.getElementById("customShareBtn");
+const customStatusEl = document.getElementById("customStatus");
+const elementPickerEl = document.getElementById("elementPicker");
+const savedCustomListEl = document.getElementById("savedCustomList");
+const layerListEl = document.getElementById("layerList");
+const layerSummaryEl = document.getElementById("layerSummary");
+const composerPreviewCanvas = document.getElementById("composerPreviewCanvas");
 
 const state = {
   options: {
@@ -69,13 +94,49 @@ const state = {
   archiveVectors: [],
   frameGate: 0,
   seedCounter: 0,
+  appMode: APP_MODE_GENERATOR,
+  composerMenuWidth: DEFAULT_COMPOSER_MENU_WIDTH,
+  customSeedCounter: 0,
+  currentCustomId: null,
+  customCompositions: [],
+  customDraft: null,
   menuOpen: false,
+  menuResizeSession: null,
   touchStart: null,
 };
 
 const qualityProbeCanvas = document.createElement("canvas");
 qualityProbeCanvas.width = QUALITY_PROBE_WIDTH;
 qualityProbeCanvas.height = QUALITY_PROBE_HEIGHT;
+
+const customColorSchemes = [
+  {
+    id: "neon-noir",
+    name: "Neon Noir",
+    colors: ["#6df7ff", "#ff7ad9", "#ffd166", "#7cff8c"],
+    ink: "#f4f0e8",
+  },
+  {
+    id: "acid-sun",
+    name: "Acid Sun",
+    colors: ["#ff7b54", "#ffd23f", "#6cffb8", "#2bd9fe"],
+    ink: "#f9f3e6",
+  },
+  {
+    id: "opal-night",
+    name: "Opal Night",
+    colors: ["#b4f5ff", "#93a7ff", "#d7a6ff", "#ffb6d9"],
+    ink: "#f7f7fb",
+  },
+  {
+    id: "ember-signal",
+    name: "Ember Signal",
+    colors: ["#ff8a5b", "#ffcf6e", "#f14a7d", "#8af0d6"],
+    ink: "#fff2e2",
+  },
+];
+
+let customElementTypes = [];
 
 const researchPrinciples = [
   {
@@ -387,6 +448,20 @@ const allPrincipleIds = researchPrinciples.map((item) => item.id);
 const immersiveMotionPrincipleIds = researchPrinciples
   .filter((item) => item.fullScreenMotion)
   .map((item) => item.id);
+customElementTypes = researchPrinciples.map((profile) => ({
+  id: profile.id,
+  name: profile.name,
+  description: profile.mechanism,
+  defaultSpeed: profile.fullScreenMotion ? 1 : profile.fixationTarget ? 0.45 : 0.7,
+  buildParams(rng, options) {
+    return cloneJson(profile.sample(rng, options));
+  },
+  draw(ctx, width, height, layer, scheme, time) {
+    drawCustomResearchElement(profile, ctx, width, height, layer, scheme, time);
+  },
+}));
+const customSchemeById = Object.fromEntries(customColorSchemes.map((item) => [item.id, item]));
+const customElementById = Object.fromEntries(customElementTypes.map((item) => [item.id, item]));
 const blendModes = [
   "source-over",
   "screen",
@@ -402,9 +477,105 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+function getComposerMenuWidthBounds() {
+  const maxWidth = Math.max(360, Math.floor(window.innerWidth * 0.96));
+  const minWidth = Math.min(420, maxWidth);
+  return { minWidth, maxWidth };
+}
+
+function clampComposerMenuWidth(width) {
+  const { minWidth, maxWidth } = getComposerMenuWidthBounds();
+  return clamp(width, minWidth, maxWidth);
+}
+
 function wrapHue(h) {
   const mod = h % 360;
   return mod < 0 ? mod + 360 : mod;
+}
+
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function hexToRgb(hex) {
+  const normalized = typeof hex === "string" ? hex.trim() : "";
+  if (!/^#?[0-9a-f]{6}$/i.test(normalized)) {
+    return { r: 255, g: 255, b: 255 };
+  }
+
+  const compact = normalized.startsWith("#") ? normalized.slice(1) : normalized;
+  return {
+    r: Number.parseInt(compact.slice(0, 2), 16),
+    g: Number.parseInt(compact.slice(2, 4), 16),
+    b: Number.parseInt(compact.slice(4, 6), 16),
+  };
+}
+
+function rgbToHsl(r, g, b) {
+  const nr = r / 255;
+  const ng = g / 255;
+  const nb = b / 255;
+  const max = Math.max(nr, ng, nb);
+  const min = Math.min(nr, ng, nb);
+  const lightness = (max + min) / 2;
+  const delta = max - min;
+
+  if (!delta) {
+    return { h: 0, s: 0, l: lightness * 100 };
+  }
+
+  const saturation =
+    lightness > 0.5 ? delta / (2 - max - min) : delta / (max + min);
+
+  let hue = 0;
+  if (max === nr) {
+    hue = (ng - nb) / delta + (ng < nb ? 6 : 0);
+  } else if (max === ng) {
+    hue = (nb - nr) / delta + 2;
+  } else {
+    hue = (nr - ng) / delta + 4;
+  }
+
+  return {
+    h: (hue / 6) * 360,
+    s: saturation * 100,
+    l: lightness * 100,
+  };
+}
+
+function hexToTone(hex) {
+  const { r, g, b } = hexToRgb(hex);
+  const hsl = rgbToHsl(r, g, b);
+  return makeTone(hsl.h, hsl.s, hsl.l);
+}
+
+function rgba(hex, alpha = 1) {
+  const { r, g, b } = hexToRgb(hex);
+  return `rgba(${r}, ${g}, ${b}, ${clamp(alpha, 0, 1)})`;
+}
+
+function isHexColor(value) {
+  return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value.trim());
+}
+
+function encodeBase64Url(input) {
+  const bytes = new TextEncoder().encode(input);
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function decodeBase64Url(input) {
+  const padded = input.replace(/-/g, "+").replace(/_/g, "/");
+  const normalized = padded + "=".repeat((4 - (padded.length % 4 || 4)) % 4);
+  const binary = atob(normalized);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new TextDecoder().decode(bytes);
 }
 
 function pick(list, rng) {
@@ -620,6 +791,384 @@ function makeSeed(extra = "") {
 
 function mutateSeed(seed, index) {
   return `${seed}-${index.toString(36)}-${Math.floor(Math.random() * 1e8).toString(36)}`;
+}
+
+function getCustomScheme(schemeId) {
+  return customSchemeById[schemeId] || customColorSchemes[0];
+}
+
+function getEffectiveLayerScheme(layer, baseScheme) {
+  const scheme =
+    layer.overrideScheme && layer.schemeId ? getCustomScheme(layer.schemeId) : baseScheme;
+
+  if (!layer.useCustomColors) {
+    return scheme;
+  }
+
+  return {
+    id: "custom",
+    name: "Custom Colors",
+    colors: Array.isArray(layer.customColors) && layer.customColors.length === 4
+      ? layer.customColors.map((color, index) => (isHexColor(color) ? color : scheme.colors[index]))
+      : [...scheme.colors],
+    ink: isHexColor(layer.customInk) ? layer.customInk : scheme.ink,
+  };
+}
+
+function createCustomPalette(backgroundColor, schemeId) {
+  const scheme = getCustomScheme(schemeId);
+  return {
+    baseHue: hexToTone(scheme.colors[0]).h,
+    bgA: hexToTone(backgroundColor),
+    bgB: hexToTone(scheme.colors[1]),
+    ink: hexToTone(scheme.ink),
+    accents: scheme.colors.map((color) => hexToTone(color)),
+  };
+}
+
+function getCustomSchemeOptionsMarkup(selectedId, includeGlobal = false) {
+  const options = [];
+  if (includeGlobal) {
+    options.push(`<option value="" ${selectedId ? "" : "selected"}>Use Global Scheme</option>`);
+  }
+  for (const scheme of customColorSchemes) {
+    options.push(
+      `<option value="${scheme.id}" ${scheme.id === selectedId ? "selected" : ""}>${scheme.name}</option>`
+    );
+  }
+  return options.join("");
+}
+
+function makeCustomLayer(typeId = customElementTypes[0].id) {
+  const element = customElementById[typeId] || customElementTypes[0];
+  const rng = new SeedRng(`custom-${element.id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
+  const currentScheme = getCustomScheme(getCurrentCustomComposition()?.schemeId || customColorSchemes[0].id);
+  return {
+    id: `layer-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    typeId: element.id,
+    x: 0,
+    y: 0,
+    scale: 1,
+    rotation: 0,
+    speed: element.defaultSpeed,
+    opacity: 0.86,
+    overrideScheme: false,
+    schemeId: "",
+    useCustomColors: false,
+    customColors: [...currentScheme.colors],
+    customInk: currentScheme.ink,
+    params: element.buildParams ? element.buildParams(rng, { complexity: 6, motion: 4 }) : {},
+  };
+}
+
+function makeEmptyCustomComposition(name = "") {
+  const scheme = customColorSchemes[0];
+  state.customSeedCounter += 1;
+  return {
+    id: null,
+    name: name || `Untitled ${state.customSeedCounter}`,
+    backgroundColor: "#080c14",
+    schemeId: scheme.id,
+    layers: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+}
+
+function sanitizeCustomLayer(layer) {
+  if (!layer || !customElementById[layer.typeId]) {
+    return null;
+  }
+
+  const element = customElementById[layer.typeId];
+  const x = Number(layer.x);
+  const y = Number(layer.y);
+  const scale = Number(layer.scale);
+  const rotation = Number(layer.rotation);
+  const speed = Number(layer.speed);
+  const opacity = Number(layer.opacity);
+  const fallbackScheme = getCustomScheme(layer.schemeId);
+  const customColors = Array.isArray(layer.customColors)
+    ? layer.customColors.slice(0, 4).map((color, index) => (isHexColor(color) ? color : fallbackScheme.colors[index] || customColorSchemes[0].colors[index]))
+    : [...fallbackScheme.colors];
+
+  return {
+    id:
+      typeof layer.id === "string" && layer.id
+        ? layer.id
+        : `layer-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    typeId: layer.typeId,
+    x: clamp(Number.isFinite(x) ? x : 0, -60, 60),
+    y: clamp(Number.isFinite(y) ? y : 0, -60, 60),
+    scale: clamp(Number.isFinite(scale) ? scale : 1, 0.2, 3),
+    rotation: clamp(Number.isFinite(rotation) ? rotation : 0, -180, 180),
+    speed: clamp(Number.isFinite(speed) ? speed : 0, -3, 3),
+    opacity: clamp(Number.isFinite(opacity) ? opacity : 0.86, 0, 1),
+    overrideScheme: Boolean(layer.overrideScheme),
+    schemeId:
+      typeof layer.schemeId === "string" && customSchemeById[layer.schemeId] ? layer.schemeId : "",
+    useCustomColors: Boolean(layer.useCustomColors),
+    customColors:
+      customColors.length === 4
+        ? customColors
+        : [...customColors, ...customColorSchemes[0].colors].slice(0, 4),
+    customInk: isHexColor(layer.customInk) ? layer.customInk : fallbackScheme.ink,
+    params: layer.params && typeof layer.params === "object" ? cloneJson(layer.params) : element.buildParams?.(new SeedRng(`restore-${layer.id}`), { complexity: 6, motion: 4 }) || {},
+  };
+}
+
+function sanitizeCustomComposition(item) {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+
+  const layers = Array.isArray(item.layers) ? item.layers.map(sanitizeCustomLayer).filter(Boolean) : [];
+  return {
+    id: typeof item.id === "string" && item.id ? item.id : null,
+    name:
+      typeof item.name === "string" && item.name.trim()
+        ? item.name.trim().slice(0, 48)
+        : `Untitled ${Math.max(1, state.customSeedCounter + 1)}`,
+    backgroundColor:
+      typeof item.backgroundColor === "string" && /^#[0-9a-f]{6}$/i.test(item.backgroundColor)
+        ? item.backgroundColor
+        : "#080c14",
+    schemeId: customSchemeById[item.schemeId] ? item.schemeId : customColorSchemes[0].id,
+    layers,
+    createdAt: Number(item.createdAt) || Date.now(),
+    updatedAt: Number(item.updatedAt) || Date.now(),
+  };
+}
+
+function getCurrentCustomComposition() {
+  return state.customDraft;
+}
+
+function setCustomStatus(message) {
+  if (customStatusEl) {
+    customStatusEl.textContent = message;
+  }
+}
+
+function syncCustomControls() {
+  const current =
+    getCurrentCustomComposition() || {
+      name: "",
+      backgroundColor: "#080c14",
+      schemeId: customColorSchemes[0].id,
+      layers: [],
+    };
+  customNameInput.value = current.name;
+  customBackgroundInput.value = current.backgroundColor;
+  customSchemeSelect.innerHTML = getCustomSchemeOptionsMarkup(current.schemeId);
+  customSchemeSelect.value = current.schemeId;
+  layerSummaryEl.textContent = `${current.layers.length} layer${current.layers.length === 1 ? "" : "s"}`;
+}
+
+function createNewCustomDraft() {
+  state.currentCustomId = null;
+  state.customDraft = makeEmptyCustomComposition();
+  syncCustomControls();
+  renderSavedCustomList();
+  renderLayerList();
+  updateInterface();
+  persistState();
+  setCustomStatus("New blank composition ready.");
+}
+
+function loadCustomComposition(customId) {
+  const found = state.customCompositions.find((item) => item.id === customId);
+  if (!found) {
+    return;
+  }
+  state.currentCustomId = found.id;
+  state.customDraft = cloneJson(found);
+  syncCustomControls();
+  renderSavedCustomList();
+  renderLayerList();
+  updateInterface();
+  persistState();
+  setCustomStatus(`Editing ${found.name}.`);
+}
+
+function saveCurrentCustomComposition() {
+  const current = getCurrentCustomComposition();
+  if (!current) {
+    return;
+  }
+
+  current.name = (customNameInput.value || current.name || "").trim().slice(0, 48) || "Untitled composition";
+  current.updatedAt = Date.now();
+
+  if (!state.currentCustomId) {
+    current.id = `custom-${current.updatedAt.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    current.createdAt = current.updatedAt;
+    state.currentCustomId = current.id;
+    state.customCompositions.unshift(cloneJson(current));
+  } else {
+    const index = state.customCompositions.findIndex((item) => item.id === state.currentCustomId);
+    if (index === -1) {
+      state.customCompositions.unshift(cloneJson(current));
+    } else {
+      state.customCompositions[index] = cloneJson(current);
+    }
+  }
+
+  state.customDraft = cloneJson(current);
+  renderSavedCustomList();
+  syncCustomControls();
+  updateInterface();
+  persistState();
+  setCustomStatus(`Saved ${current.name}.`);
+}
+
+function updateCurrentCustom(mutator, options = {}) {
+  const current = getCurrentCustomComposition();
+  if (!current) {
+    state.customDraft = makeEmptyCustomComposition();
+  }
+
+  mutator(state.customDraft);
+  state.customDraft.updatedAt = Date.now();
+  if (options.syncControls !== false) {
+    syncCustomControls();
+  }
+  if (options.renderLayers !== false) {
+    renderLayerList();
+  }
+  if (options.renderSaved !== false) {
+    renderSavedCustomList();
+  }
+  updateInterface();
+  persistState();
+}
+
+function serializeSharePayload(payload) {
+  return encodeBase64Url(JSON.stringify(payload));
+}
+
+function parseSharePayload(token) {
+  return JSON.parse(decodeBase64Url(token));
+}
+
+function buildShareUrl(payload) {
+  const url = new URL(window.location.href);
+  url.hash = `share=${serializeSharePayload(payload)}`;
+  return url.toString();
+}
+
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const input = document.createElement("textarea");
+  input.value = text;
+  input.setAttribute("readonly", "");
+  input.style.position = "absolute";
+  input.style.left = "-9999px";
+  document.body.append(input);
+  input.select();
+  document.execCommand("copy");
+  input.remove();
+}
+
+function getCurrentSharePayload() {
+  if (state.appMode === APP_MODE_COMPOSER) {
+    const current = getCurrentCustomComposition();
+    if (!current) {
+      return null;
+    }
+    const shared = cloneJson(current);
+    shared.id = null;
+    return {
+      version: 1,
+      mode: APP_MODE_COMPOSER,
+      item: shared,
+    };
+  }
+
+  const current = getCurrentIllusion();
+  if (!current) {
+    return null;
+  }
+  return {
+    version: 1,
+    mode: APP_MODE_GENERATOR,
+    item: cloneJson(current),
+  };
+}
+
+async function sharePayload(payload, sourceButton = null, message = "Share link copied.") {
+  if (!payload) {
+    return;
+  }
+
+  const originalLabel = sourceButton?.textContent || "";
+  try {
+    await copyTextToClipboard(buildShareUrl(payload));
+    if (sourceButton) {
+      sourceButton.textContent = "Link Copied";
+      window.setTimeout(() => {
+        sourceButton.textContent = originalLabel;
+      }, 1400);
+    }
+    if (state.appMode === APP_MODE_COMPOSER) {
+      setCustomStatus(message);
+    }
+  } catch (error) {
+    console.warn("Share link copy failed:", error);
+    if (sourceButton) {
+      sourceButton.textContent = "Copy Failed";
+      window.setTimeout(() => {
+        sourceButton.textContent = originalLabel;
+      }, 1400);
+    }
+    if (state.appMode === APP_MODE_COMPOSER) {
+      setCustomStatus("Share link copy failed.");
+    }
+  }
+}
+
+function hydrateFromShareLink() {
+  const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
+  const params = new URLSearchParams(hash);
+  const token = params.get("share");
+  if (!token) {
+    return;
+  }
+
+  try {
+    const payload = parseSharePayload(token);
+    if (payload?.mode === APP_MODE_COMPOSER) {
+      const shared = sanitizeCustomComposition(payload.item);
+      if (!shared) {
+        return;
+      }
+      shared.id = null;
+      state.currentCustomId = null;
+      state.customDraft = shared;
+      state.appMode = APP_MODE_COMPOSER;
+      return;
+    }
+
+    if (payload?.mode === APP_MODE_GENERATOR) {
+      const shared = sanitizeStoredDiscovery(payload.item);
+      if (!shared) {
+        return;
+      }
+      state.discoveries = [shared, ...state.discoveries.filter((item) => item.id !== shared.id)].slice(0, MAX_DISCOVERIES);
+      state.archiveVectors = state.discoveries.map((item) => ({
+        id: item.id,
+        vector: item.feature,
+      }));
+      state.currentId = shared.id;
+      state.appMode = APP_MODE_GENERATOR;
+    }
+  } catch (error) {
+    console.warn("Share link load failed:", error);
+  }
 }
 
 function makePalette(rng) {
@@ -1216,6 +1765,9 @@ function setCurrentByIndex(index) {
 }
 
 function navigateOlder() {
+  if (state.appMode === APP_MODE_COMPOSER) {
+    return;
+  }
   const index = getCurrentIndex();
   if (index === -1) {
     return;
@@ -1226,6 +1778,9 @@ function navigateOlder() {
 }
 
 function navigateNextOrNew() {
+  if (state.appMode === APP_MODE_COMPOSER) {
+    return;
+  }
   const index = getCurrentIndex();
   if (index === -1) {
     spawnOne("fresh");
@@ -1270,6 +1825,326 @@ function renderResearchList() {
     `;
     researchListEl.append(li);
   }
+}
+
+function renderElementPicker() {
+  elementPickerEl.innerHTML = "";
+
+  for (const element of customElementTypes) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "element-card";
+    button.dataset.addElement = element.id;
+    button.innerHTML = `
+      <canvas width="180" height="120" aria-hidden="true"></canvas>
+      <strong>${element.name}</strong>
+      <span>${element.description}</span>
+    `;
+    elementPickerEl.append(button);
+
+    const thumbCanvas = button.querySelector("canvas");
+    if (thumbCanvas) {
+      renderCustomElementThumbnail(element.id, thumbCanvas);
+    }
+  }
+}
+
+function renderSavedCustomList() {
+  const activeId = state.currentCustomId;
+  savedCustomListEl.innerHTML = "";
+
+  if (!state.customCompositions.length) {
+    savedCustomListEl.innerHTML = `<p class="empty-state">No saved custom compositions yet. Build one, then save it here for later edits.</p>`;
+    return;
+  }
+
+  for (const item of state.customCompositions) {
+    const wrapper = document.createElement("div");
+    wrapper.className = `saved-custom-item${item.id === activeId ? " active" : ""}`;
+    const dateLabel = new Date(item.updatedAt).toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+    });
+    wrapper.innerHTML = `
+      <div class="saved-custom-actions">
+        <button type="button" data-load-custom="${item.id}">
+          <strong>${item.name}</strong>
+          <span>${item.layers.length} layer${item.layers.length === 1 ? "" : "s"} in ${getCustomScheme(item.schemeId).name}</span>
+        </button>
+        <button type="button" data-share-custom="${item.id}">Share</button>
+      </div>
+      <div class="saved-custom-meta">
+        <span>${dateLabel}</span>
+        <span>${item.id === activeId ? "Editing" : "Saved"}</span>
+      </div>
+    `;
+    savedCustomListEl.append(wrapper);
+  }
+}
+
+function formatLayerValue(property, value) {
+  switch (property) {
+    case "x":
+    case "y":
+      return `${Math.round(value)}%`;
+    case "scale":
+      return `${Math.round(value * 100)}%`;
+    case "rotation":
+      return `${Math.round(value)}deg`;
+    case "speed":
+      return value.toFixed(1);
+    case "opacity":
+      return `${Math.round(value * 100)}%`;
+    default:
+      return String(value);
+  }
+}
+
+function renderLayerList() {
+  const current = getCurrentCustomComposition();
+  layerListEl.innerHTML = "";
+  const layers = current?.layers || [];
+  layerSummaryEl.textContent = `${layers.length} layer${layers.length === 1 ? "" : "s"}`;
+
+  if (!layers.length) {
+    layerListEl.innerHTML = `<p class="empty-state">Add a layer from the selector above. Each new element is placed on top of the existing stack.</p>`;
+    return;
+  }
+
+  const displayLayers = [...layers].reverse();
+  displayLayers.forEach((layer, displayIndex) => {
+    const actualIndex = layers.length - 1 - displayIndex;
+    const isTopLayer = actualIndex === layers.length - 1;
+    const element = customElementById[layer.typeId];
+    const article = document.createElement("article");
+    article.className = `layer-card${isTopLayer ? " top-layer" : ""}`;
+    article.dataset.layerId = layer.id;
+    article.innerHTML = `
+      <div class="layer-card-head">
+        <div class="layer-card-meta">
+          <strong>${element.name}</strong>
+          <span>${isTopLayer ? "Top Layer" : `Layer ${actualIndex + 1}`}</span>
+        </div>
+        <button type="button" class="layer-remove-btn" data-remove-layer="${layer.id}">Remove</button>
+      </div>
+      <div class="field-grid layer-controls">
+        ${renderLayerRangeField(layer, "x", "Position X", -50, 50, 1)}
+        ${renderLayerRangeField(layer, "y", "Position Y", -50, 50, 1)}
+        ${renderLayerRangeField(layer, "scale", "Scale", 0.2, 3, 0.05)}
+        ${renderLayerRangeField(layer, "rotation", "Rotation", -180, 180, 1)}
+        ${renderLayerRangeField(layer, "speed", "Speed", -3, 3, 0.1)}
+        ${renderLayerRangeField(layer, "opacity", "Opacity", 0, 1, 0.01)}
+        <label class="field-stack">
+          <span>Override Scheme</span>
+          <span class="toggle-row">
+            <input type="checkbox" data-layer-id="${layer.id}" data-layer-property="overrideScheme" ${layer.overrideScheme ? "checked" : ""} />
+            Use a different palette for this layer
+          </span>
+        </label>
+        <label class="field-stack">
+          <span>Layer Scheme</span>
+          <select class="select-input" data-layer-id="${layer.id}" data-layer-property="schemeId" ${layer.overrideScheme && !layer.useCustomColors ? "" : "disabled"}>
+            ${getCustomSchemeOptionsMarkup(layer.schemeId, true)}
+          </select>
+        </label>
+        <label class="field-stack">
+          <span>Specific Colors</span>
+          <span class="toggle-row">
+            <input type="checkbox" data-layer-id="${layer.id}" data-layer-property="useCustomColors" ${layer.useCustomColors ? "checked" : ""} />
+            Pick exact colors for this layer
+          </span>
+        </label>
+      </div>
+      ${layer.useCustomColors ? renderLayerColorFields(layer) : ""}
+    `;
+    layerListEl.append(article);
+  });
+}
+
+function renderLayerRangeField(layer, property, label, min, max, step) {
+  return `
+    <label class="field-stack range-field">
+      <span class="field-label-row">
+        <span>${label}</span>
+        <output>${formatLayerValue(property, layer[property])}</output>
+      </span>
+      <input
+        type="range"
+        min="${min}"
+        max="${max}"
+        step="${step}"
+        value="${layer[property]}"
+        data-layer-id="${layer.id}"
+        data-layer-property="${property}"
+      />
+    </label>
+  `;
+}
+
+function renderLayerColorFields(layer) {
+  const labels = ["Accent 1", "Accent 2", "Accent 3", "Accent 4"];
+  const fields = layer.customColors
+    .map(
+      (color, index) => `
+        <label class="field-stack color-field">
+          <span>${labels[index]}</span>
+          <input
+            class="color-input"
+            type="color"
+            value="${color}"
+            data-layer-id="${layer.id}"
+            data-layer-property="customColor"
+            data-layer-color-index="${index}"
+          />
+        </label>
+      `
+    )
+    .join("");
+
+  return `
+    <div class="field-grid layer-color-grid">
+      ${fields}
+      <label class="field-stack color-field">
+        <span>Ink</span>
+        <input
+          class="color-input"
+          type="color"
+          value="${layer.customInk}"
+          data-layer-id="${layer.id}"
+          data-layer-property="customInk"
+        />
+      </label>
+    </div>
+  `;
+}
+
+function applyMenuWidth() {
+  const narrowViewport = window.innerWidth <= 860;
+  const inComposer = state.appMode === APP_MODE_COMPOSER;
+
+  if (inComposer && !narrowViewport) {
+    sideMenuEl.style.width = `${clampComposerMenuWidth(state.composerMenuWidth)}px`;
+    composerResizeHandleEl.hidden = false;
+  } else {
+    sideMenuEl.style.width = "";
+    composerResizeHandleEl.hidden = true;
+  }
+}
+
+function setAppMode(mode) {
+  state.appMode = mode === APP_MODE_COMPOSER ? APP_MODE_COMPOSER : APP_MODE_GENERATOR;
+  const inComposer = state.appMode === APP_MODE_COMPOSER;
+
+  generatorModeBtn.classList.toggle("active", !inComposer);
+  generatorModeBtn.setAttribute("aria-pressed", String(!inComposer));
+  composerModeBtn.classList.toggle("active", inComposer);
+  composerModeBtn.setAttribute("aria-pressed", String(inComposer));
+
+  for (const panel of modePanelEls) {
+    const visible = panel.dataset.modePanel === state.appMode;
+    panel.hidden = !visible;
+    panel.classList.toggle("hidden-panel", !visible);
+  }
+
+  applyMenuWidth();
+
+  if (inComposer) {
+    resizeComposerPreviewCanvas();
+  }
+
+  if (state.menuOpen) {
+    if (inComposer) {
+      menuBackdrop.classList.remove("open");
+      menuBackdrop.hidden = true;
+    } else {
+      menuBackdrop.hidden = false;
+      requestAnimationFrame(() => {
+        if (state.menuOpen && state.appMode === APP_MODE_GENERATOR) {
+          menuBackdrop.classList.add("open");
+        }
+      });
+    }
+  }
+
+  updateInterface();
+  persistState();
+}
+
+function handleLayerEditorInput(event) {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) {
+    return;
+  }
+
+  const layerId = target.dataset.layerId;
+  const property = target.dataset.layerProperty;
+  if (!layerId || !property) {
+    return;
+  }
+
+  const shouldRerender =
+    target instanceof HTMLSelectElement ||
+    (target instanceof HTMLInputElement && target.type === "checkbox") ||
+    event.type === "change";
+
+  updateCurrentCustom((current) => {
+    const layer = current.layers.find((item) => item.id === layerId);
+    if (!layer) {
+      return;
+    }
+
+    if (target instanceof HTMLInputElement && target.type === "checkbox") {
+      layer[property] = target.checked;
+      if (!target.checked && property === "overrideScheme") {
+        layer.schemeId = "";
+      }
+      if (property === "useCustomColors" && target.checked) {
+        const currentScheme = getEffectiveLayerScheme(
+          { ...layer, useCustomColors: false },
+          getCustomScheme(getCurrentCustomComposition()?.schemeId || customColorSchemes[0].id)
+        );
+        layer.customColors = [...currentScheme.colors];
+        layer.customInk = currentScheme.ink;
+      }
+      return;
+    }
+
+    if (property === "schemeId") {
+      layer.schemeId = target.value;
+      return;
+    }
+
+    if (property === "customColor") {
+      const colorIndex = Number(target.dataset.layerColorIndex);
+      if (Number.isInteger(colorIndex) && colorIndex >= 0 && colorIndex < layer.customColors.length) {
+        layer.customColors[colorIndex] = target.value;
+      }
+      return;
+    }
+
+    if (property === "customInk") {
+      layer.customInk = target.value;
+      return;
+    }
+
+    const numeric = Number(target.value);
+    layer[property] = Number.isFinite(numeric) ? numeric : layer[property];
+  }, {
+    syncControls: false,
+    renderLayers: shouldRerender,
+    renderSaved: false,
+  });
+
+  if (!shouldRerender && target instanceof HTMLInputElement) {
+    const output = target.closest(".field-stack")?.querySelector("output");
+    const current = getCurrentCustomComposition();
+    const layer = current?.layers.find((item) => item.id === layerId);
+    if (output && layer) {
+      output.textContent = formatLayerValue(property, layer[property]);
+    }
+  }
+
+  setCustomStatus("Layer updated.");
 }
 
 function setPrincipleEnabled(principleId, enabled) {
@@ -1331,19 +2206,49 @@ function sanitizeStoredDiscovery(item) {
 }
 
 function updateSessionStats() {
-  discoveryCountEl.textContent = String(state.discoveries.length);
-  savedCountEl.textContent = String(state.discoveries.filter((item) => item.favorite).length);
-  autoplayStateEl.textContent = state.autoplay ? "On" : "Off";
+  if (state.appMode === APP_MODE_COMPOSER) {
+    discoveryCountLabelEl.textContent = "Custom";
+    savedCountLabelEl.textContent = "Layers";
+    autoplayStateLabelEl.textContent = "Mode";
+    discoveryCountEl.textContent = String(state.customCompositions.length);
+    savedCountEl.textContent = String((state.customDraft?.layers || []).length);
+    autoplayStateEl.textContent = "Live";
+  } else {
+    discoveryCountLabelEl.textContent = "Designs";
+    savedCountLabelEl.textContent = "Saved";
+    autoplayStateLabelEl.textContent = "Autoplay";
+    discoveryCountEl.textContent = String(state.discoveries.length);
+    savedCountEl.textContent = String(state.discoveries.filter((item) => item.favorite).length);
+    autoplayStateEl.textContent = state.autoplay ? "On" : "Off";
+  }
   autoplayBtn.textContent = state.autoplay ? "Stop Autoplay" : "Start Autoplay";
 }
 
 function updateActionButtons(current) {
+  if (state.appMode === APP_MODE_COMPOSER) {
+    saveBtn.classList.remove("active");
+    saveBtn.disabled = true;
+    saveBtn.title = "Use Save Composition in Composer mode";
+    return;
+  }
+
   const isSaved = Boolean(current?.favorite);
+  saveBtn.disabled = false;
+  saveBtn.title = "Save design";
   saveBtn.classList.toggle("active", isSaved);
   saveBtn.innerHTML = "&#9829;";
 }
 
 function updateMetaBar() {
+  if (state.appMode === APP_MODE_COMPOSER) {
+    const current = getCurrentCustomComposition();
+    currentPositionEl.textContent = "Composer";
+    currentSeedEl.textContent = current ? current.name : "Untitled composition";
+    currentNoveltyEl.textContent = current ? `${current.layers.length} layer${current.layers.length === 1 ? "" : "s"}` : "0 layers";
+    updateActionButtons(null);
+    return;
+  }
+
   const current = getCurrentIllusion();
   const index = getCurrentIndex();
 
@@ -1362,6 +2267,13 @@ function updateMetaBar() {
 }
 
 function updateNavButtons() {
+  if (state.appMode === APP_MODE_COMPOSER) {
+    prevBtn.disabled = true;
+    nextBtn.disabled = true;
+    nextBtn.title = "Composer mode";
+    return;
+  }
+
   const index = getCurrentIndex();
   prevBtn.disabled = index === -1 || index >= state.discoveries.length - 1;
   nextBtn.disabled = index === -1;
@@ -1384,6 +2296,8 @@ function persistState() {
   ensurePreferenceModelShape();
   const payload = {
     options: state.options,
+    appMode: state.appMode,
+    composerMenuWidth: state.composerMenuWidth,
     preference: { ...state.preferenceModel.linear },
     preferenceModel: {
       bias: state.preferenceModel.bias,
@@ -1418,6 +2332,10 @@ function persistState() {
     })),
     currentId: state.currentId,
     seedCounter: state.seedCounter,
+    customSeedCounter: state.customSeedCounter,
+    currentCustomId: state.currentCustomId,
+    customCompositions: state.customCompositions.map((item) => cloneJson(item)),
+    customDraft: state.customDraft ? cloneJson(state.customDraft) : null,
   };
 
   try {
@@ -1431,6 +2349,7 @@ function persistState() {
 function restoreState() {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) {
+    state.customDraft = makeEmptyCustomComposition();
     return;
   }
 
@@ -1465,9 +2384,18 @@ function restoreState() {
     ensurePreferenceModelShape();
     state.preference = { ...state.preferenceModel.linear };
     state.seedCounter = Number(parsed.seedCounter) || 0;
+    state.customSeedCounter = Number(parsed.customSeedCounter) || 0;
+    state.appMode = parsed.appMode === APP_MODE_COMPOSER ? APP_MODE_COMPOSER : APP_MODE_GENERATOR;
+    state.composerMenuWidth = clampComposerMenuWidth(
+      Number(parsed.composerMenuWidth) || DEFAULT_COMPOSER_MENU_WIDTH
+    );
 
     if (Array.isArray(parsed.discoveries)) {
       state.discoveries = parsed.discoveries.map(sanitizeStoredDiscovery).filter(Boolean).slice(0, MAX_DISCOVERIES);
+    }
+
+    if (Array.isArray(parsed.customCompositions)) {
+      state.customCompositions = parsed.customCompositions.map(sanitizeCustomComposition).filter(Boolean);
     }
 
     state.archiveVectors = state.discoveries.map((item) => ({
@@ -1481,12 +2409,28 @@ function restoreState() {
           ? parsed.currentId
           : state.discoveries[0].id;
     }
+
+    if (parsed.customDraft) {
+      state.customDraft = sanitizeCustomComposition(parsed.customDraft);
+    }
+    if (!state.customDraft) {
+      state.customDraft = makeEmptyCustomComposition();
+    }
+    state.currentCustomId =
+      typeof parsed.currentCustomId === "string" &&
+      state.customCompositions.some((item) => item.id === parsed.currentCustomId)
+        ? parsed.currentCustomId
+        : null;
   } catch (error) {
     console.warn("State restore failed:", error);
+    state.customDraft = makeEmptyCustomComposition();
   }
 }
 
 function toggleSave() {
+  if (state.appMode === APP_MODE_COMPOSER) {
+    return;
+  }
   const current = getCurrentIllusion();
   if (!current) {
     return;
@@ -1500,16 +2444,27 @@ function toggleSave() {
 }
 
 function resizeCanvas() {
-  const rect = canvas.getBoundingClientRect();
+  resizeCanvasToDisplaySize(canvas, 320, 220);
+}
+
+function resizeCanvasToDisplaySize(targetCanvas, minWidth = 240, minHeight = 180) {
+  const rect = targetCanvas.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
 
-  const targetWidth = Math.max(320, Math.round(rect.width * dpr));
-  const targetHeight = Math.max(220, Math.round(rect.height * dpr));
+  const targetWidth = Math.max(minWidth, Math.round(rect.width * dpr));
+  const targetHeight = Math.max(minHeight, Math.round(rect.height * dpr));
 
-  if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
-    canvas.width = targetWidth;
-    canvas.height = targetHeight;
+  if (targetCanvas.width !== targetWidth || targetCanvas.height !== targetHeight) {
+    targetCanvas.width = targetWidth;
+    targetCanvas.height = targetHeight;
   }
+}
+
+function resizeComposerPreviewCanvas() {
+  if (!composerPreviewCanvas || composerPanelEl?.hidden) {
+    return;
+  }
+  resizeCanvasToDisplaySize(composerPreviewCanvas, 260, 320);
 }
 
 function drawBackground(ctx, width, height, palette) {
@@ -1625,6 +2580,294 @@ function renderIllusion(illusion, targetCanvas, now = 0, staticFrame = false) {
 
   drawVignette(ctx, compositionWidth, compositionHeight, illusion.palette);
   ctx.restore();
+}
+
+function renderActiveScene(targetCanvas, now = 0, staticFrame = false) {
+  if (state.appMode === APP_MODE_COMPOSER) {
+    const custom = getCurrentCustomComposition();
+    if (custom) {
+      renderCustomComposition(custom, targetCanvas, now, staticFrame);
+    } else {
+      const ctx = targetCanvas.getContext("2d");
+      ctx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
+    }
+    return;
+  }
+
+  const current = getCurrentIllusion();
+  if (current) {
+    renderIllusion(current, targetCanvas, now, staticFrame);
+  } else {
+    const ctx = targetCanvas.getContext("2d");
+    ctx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
+  }
+}
+
+function renderCustomComposition(composition, targetCanvas, now = 0, staticFrame = false) {
+  if (!composition) {
+    return;
+  }
+
+  const ctx = targetCanvas.getContext("2d");
+  const width = targetCanvas.width;
+  const height = targetCanvas.height;
+  const time = staticFrame ? 0 : now / 1000;
+  const frame = getCompositionFrame(targetCanvas, width, height);
+  const compositionWidth = frame.width;
+  const compositionHeight = frame.height;
+  const baseScheme = getCustomScheme(composition.schemeId);
+
+  ctx.clearRect(0, 0, width, height);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, width, height);
+  ctx.clip();
+  ctx.translate(frame.offsetX, frame.offsetY);
+  ctx.scale(frame.scale, frame.scale);
+
+  drawCustomBackground(ctx, compositionWidth, compositionHeight, composition, baseScheme);
+
+  for (const layer of composition.layers) {
+    const element = customElementById[layer.typeId];
+    if (!element) {
+      continue;
+    }
+
+    const scheme = getEffectiveLayerScheme(layer, baseScheme);
+    ctx.save();
+    ctx.globalAlpha = layer.opacity;
+    ctx.translate(
+      compositionWidth * (0.5 + layer.x / 100),
+      compositionHeight * (0.5 + layer.y / 100)
+    );
+    ctx.rotate((layer.rotation * Math.PI) / 180);
+    ctx.scale(layer.scale, layer.scale);
+    ctx.translate(-compositionWidth * 0.5, -compositionHeight * 0.5);
+    element.draw(ctx, compositionWidth, compositionHeight, layer, scheme, time);
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+function drawCustomBackground(ctx, width, height, composition, scheme) {
+  ctx.fillStyle = composition.backgroundColor;
+  ctx.fillRect(0, 0, width, height);
+
+  const wash = ctx.createLinearGradient(0, 0, width, height);
+  wash.addColorStop(0, rgba(scheme.colors[0], 0.18));
+  wash.addColorStop(0.5, rgba(scheme.colors[2], 0.08));
+  wash.addColorStop(1, rgba(scheme.colors[1], 0.16));
+  ctx.fillStyle = wash;
+  ctx.fillRect(0, 0, width, height);
+
+  const halo = ctx.createRadialGradient(
+    width * 0.52,
+    height * 0.42,
+    width * 0.06,
+    width * 0.52,
+    height * 0.42,
+    width * 0.58
+  );
+  halo.addColorStop(0, rgba(scheme.colors[3], 0.24));
+  halo.addColorStop(1, rgba(scheme.colors[0], 0));
+  ctx.fillStyle = halo;
+  ctx.fillRect(0, 0, width, height);
+}
+
+function drawCustomResearchElement(profile, ctx, width, height, layer, scheme, time) {
+  const palette = createCustomPalette("#080c14", scheme.id);
+  palette.bgA = hexToTone(scheme.colors[0]);
+  palette.bgB = hexToTone(scheme.colors[1]);
+  palette.ink = hexToTone(scheme.ink);
+  palette.accents = scheme.colors.map((color) => hexToTone(color));
+
+  const illusionLike = {
+    motionStrength: clamp(Math.abs(layer.speed) / 3, 0, 1),
+    palette,
+    layers: [layer],
+    fixationAid: null,
+  };
+
+  profile.draw(
+    ctx,
+    width,
+    height,
+    layer.params || {},
+    palette,
+    time * (layer.speed || 0),
+    illusionLike
+  );
+}
+
+function renderCustomElementThumbnail(typeId, targetCanvas) {
+  const scheme = customColorSchemes[0];
+  const composition = {
+    backgroundColor: "#070b12",
+    schemeId: scheme.id,
+    layers: [
+      {
+        ...makeCustomLayer(typeId),
+        speed: 0.6,
+      },
+    ],
+  };
+  resizeCanvasToDisplaySize(targetCanvas, 180, 120);
+  renderCustomComposition(composition, targetCanvas, 1200, true);
+}
+
+function drawCustomHaloOrb(ctx, width, height, layer, scheme, time) {
+  const cx = width * 0.5;
+  const cy = height * 0.5;
+  const pulse = 1 + Math.sin(time * layer.speed * 2.4) * 0.08;
+  const radius = Math.min(width, height) * 0.17 * pulse;
+
+  const glow = ctx.createRadialGradient(cx, cy, radius * 0.08, cx, cy, radius * 1.8);
+  glow.addColorStop(0, rgba(scheme.colors[0], 0.95));
+  glow.addColorStop(0.45, rgba(scheme.colors[1], 0.4));
+  glow.addColorStop(1, rgba(scheme.colors[2], 0));
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius * 1.8, 0, TAU);
+  ctx.fill();
+
+  ctx.fillStyle = rgba(scheme.ink, 0.9);
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius * 0.36, 0, TAU);
+  ctx.fill();
+
+  for (let i = 0; i < 5; i += 1) {
+    const theta = (i / 5) * TAU + time * layer.speed * 0.8 * (i % 2 === 0 ? 1 : -1);
+    const orbitRadius = radius * (0.9 + i * 0.22);
+    const size = radius * (0.08 + i * 0.02);
+    const x = cx + Math.cos(theta) * orbitRadius;
+    const y = cy + Math.sin(theta) * orbitRadius * 0.72;
+    ctx.fillStyle = rgba(scheme.colors[(i + 2) % scheme.colors.length], 0.55);
+    ctx.beginPath();
+    ctx.arc(x, y, size, 0, TAU);
+    ctx.fill();
+  }
+}
+
+function drawCustomRippleRings(ctx, width, height, layer, scheme, time) {
+  const cx = width * 0.5;
+  const cy = height * 0.5;
+  const maxRadius = Math.min(width, height) * 0.34;
+  ctx.lineWidth = Math.max(1.5, Math.min(width, height) * 0.004);
+
+  for (let i = 0; i < 8; i += 1) {
+    const radius = maxRadius * (0.18 + i * 0.11);
+    const phase = time * layer.speed + i * 0.4;
+    ctx.strokeStyle = rgba(scheme.colors[i % scheme.colors.length], 0.2 + i * 0.08);
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius + Math.sin(phase) * 6, phase * 0.35, phase * 0.35 + Math.PI * 1.75);
+    ctx.stroke();
+  }
+}
+
+function drawCustomMoireWave(ctx, width, height, layer, scheme, time) {
+  ctx.lineWidth = Math.max(1.1, Math.min(width, height) * 0.0022);
+
+  for (let band = 0; band < 3; band += 1) {
+    const color = scheme.colors[band % scheme.colors.length];
+    const spacing = height * (0.08 + band * 0.025);
+    const amplitude = height * (0.04 + band * 0.015);
+    const speed = time * layer.speed * (0.7 + band * 0.2);
+    ctx.strokeStyle = rgba(color, 0.34 + band * 0.1);
+
+    for (let y = -spacing; y <= height + spacing; y += spacing) {
+      ctx.beginPath();
+      for (let x = -40; x <= width + 40; x += 16) {
+        const yPos = y + Math.sin(x * 0.012 + speed + band * 1.2) * amplitude;
+        if (x === -40) {
+          ctx.moveTo(x, yPos);
+        } else {
+          ctx.lineTo(x, yPos);
+        }
+      }
+      ctx.stroke();
+    }
+  }
+}
+
+function drawCustomSunburst(ctx, width, height, layer, scheme, time) {
+  const cx = width * 0.5;
+  const cy = height * 0.5;
+  const rays = 18;
+  const spin = time * layer.speed * 0.24;
+
+  for (let i = 0; i < rays; i += 1) {
+    const angle = (i / rays) * TAU + spin;
+    const inner = Math.min(width, height) * 0.12;
+    const outer = Math.min(width, height) * (0.34 + (i % 3) * 0.06);
+    const color = scheme.colors[i % scheme.colors.length];
+
+    ctx.fillStyle = rgba(color, 0.22 + (i % 2) * 0.08);
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(angle - 0.05) * inner, cy + Math.sin(angle - 0.05) * inner);
+    ctx.lineTo(cx + Math.cos(angle) * outer, cy + Math.sin(angle) * outer);
+    ctx.lineTo(cx + Math.cos(angle + 0.05) * inner, cy + Math.sin(angle + 0.05) * inner);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  ctx.strokeStyle = rgba(scheme.ink, 0.6);
+  ctx.lineWidth = Math.max(1.2, Math.min(width, height) * 0.004);
+  ctx.beginPath();
+  ctx.arc(cx, cy, Math.min(width, height) * 0.11, 0, TAU);
+  ctx.stroke();
+}
+
+function drawCustomPrismBars(ctx, width, height, layer, scheme, time) {
+  const barCount = 6;
+  const travel = time * layer.speed * 28;
+
+  for (let i = 0; i < barCount; i += 1) {
+    const w = width * (0.18 + (i % 3) * 0.08);
+    const h = height * (0.72 - i * 0.06);
+    const x = width * 0.12 + i * width * 0.12 + Math.sin(time * layer.speed + i) * 18 + travel * 0.2 * (i % 2 === 0 ? 1 : -1);
+    const y = height * 0.14 + i * 12;
+    const color = scheme.colors[i % scheme.colors.length];
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(-0.26 + i * 0.06);
+    ctx.fillStyle = rgba(color, 0.22 + i * 0.04);
+    ctx.fillRect(-w * 0.5, -h * 0.5, w, h);
+    ctx.strokeStyle = rgba(scheme.ink, 0.18);
+    ctx.strokeRect(-w * 0.5, -h * 0.5, w, h);
+    ctx.restore();
+  }
+}
+
+function drawCustomCheckerVeil(ctx, width, height, layer, scheme, time) {
+  const cols = 8;
+  const rows = 6;
+  const tileW = width / cols;
+  const tileH = height / rows;
+
+  for (let row = -1; row <= rows; row += 1) {
+    for (let col = -1; col <= cols; col += 1) {
+      const driftX = Math.sin(time * layer.speed + row * 0.7) * 12;
+      const driftY = Math.cos(time * layer.speed * 0.9 + col * 0.5) * 10;
+      ctx.fillStyle = rgba(scheme.colors[(row + col + customColorSchemes.length * 2) % scheme.colors.length], (row + col) % 2 === 0 ? 0.24 : 0.09);
+      ctx.fillRect(col * tileW + driftX, row * tileH + driftY, tileW + 1, tileH + 1);
+    }
+  }
+
+  ctx.strokeStyle = rgba(scheme.ink, 0.1);
+  ctx.lineWidth = 1;
+  for (let col = 0; col <= cols; col += 1) {
+    ctx.beginPath();
+    ctx.moveTo(col * tileW, 0);
+    ctx.lineTo(col * tileW, height);
+    ctx.stroke();
+  }
+  for (let row = 0; row <= rows; row += 1) {
+    ctx.beginPath();
+    ctx.moveTo(0, row * tileH);
+    ctx.lineTo(width, row * tileH);
+    ctx.stroke();
+  }
 }
 
 function drawWaveSet(ctx, width, height, config) {
@@ -2657,6 +3900,11 @@ function setMenuOpen(open) {
   menuToggleBtn.setAttribute("aria-expanded", String(open));
 
   if (open) {
+    if (state.appMode === APP_MODE_COMPOSER) {
+      menuBackdrop.classList.remove("open");
+      menuBackdrop.hidden = true;
+      return;
+    }
     menuBackdrop.hidden = false;
     requestAnimationFrame(() => {
       menuBackdrop.classList.add("open");
@@ -2673,19 +3921,23 @@ function setMenuOpen(open) {
 }
 
 function exportCurrentPng() {
-  const current = getCurrentIllusion();
+  const current =
+    state.appMode === APP_MODE_COMPOSER ? getCurrentCustomComposition() : getCurrentIllusion();
   if (!current) {
     return;
   }
-  renderIllusion(current, canvas, performance.now(), true);
+  renderActiveScene(canvas, performance.now(), true);
   const link = document.createElement("a");
   link.href = canvas.toDataURL("image/png");
-  link.download = `illusion-${shortSeed(current.seed).replace(/\.+/g, "-")}.png`;
+  link.download =
+    state.appMode === APP_MODE_COMPOSER
+      ? `${(current.name || "custom-composition").trim().replace(/\s+/g, "-").toLowerCase()}.png`
+      : `illusion-${shortSeed(current.seed).replace(/\.+/g, "-")}.png`;
   link.click();
 }
 
 function handleSwipeStart(event) {
-  if (state.menuOpen || event.touches.length !== 1) {
+  if (state.appMode === APP_MODE_COMPOSER || state.menuOpen || event.touches.length !== 1) {
     return;
   }
   const touch = event.touches[0];
@@ -2697,7 +3949,7 @@ function handleSwipeStart(event) {
 }
 
 function handleSwipeEnd(event) {
-  if (!state.touchStart || state.menuOpen) {
+  if (state.appMode === APP_MODE_COMPOSER || !state.touchStart || state.menuOpen) {
     state.touchStart = null;
     return;
   }
@@ -2727,6 +3979,10 @@ function handleKeydown(event) {
     return;
   }
 
+  if (state.appMode === APP_MODE_COMPOSER) {
+    return;
+  }
+
   if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
     return;
   }
@@ -2744,12 +4000,52 @@ function handleKeydown(event) {
   navigateNextOrNew();
 }
 
+function startComposerMenuResize(event) {
+  if (state.appMode !== APP_MODE_COMPOSER || window.innerWidth <= 860) {
+    return;
+  }
+
+  event.preventDefault();
+  const pointerId = event.pointerId;
+  composerResizeHandleEl.setPointerCapture(pointerId);
+  state.menuResizeSession = { pointerId };
+  document.body.style.cursor = "ew-resize";
+  document.body.style.userSelect = "none";
+}
+
+function handleComposerMenuResize(event) {
+  if (!state.menuResizeSession || state.menuResizeSession.pointerId !== event.pointerId) {
+    return;
+  }
+
+  const rect = sideMenuEl.getBoundingClientRect();
+  state.composerMenuWidth = clampComposerMenuWidth(event.clientX - rect.left);
+  applyMenuWidth();
+}
+
+function stopComposerMenuResize(event) {
+  if (!state.menuResizeSession || state.menuResizeSession.pointerId !== event.pointerId) {
+    return;
+  }
+
+  if (composerResizeHandleEl.hasPointerCapture(event.pointerId)) {
+    composerResizeHandleEl.releasePointerCapture(event.pointerId);
+  }
+  state.menuResizeSession = null;
+  document.body.style.cursor = "";
+  document.body.style.userSelect = "";
+  persistState();
+}
+
 function bindEvents() {
   newBtn.addEventListener("click", () => spawnOne("fresh"));
   evolveBtn.addEventListener("click", () => spawnOne("evolve"));
   batchBtn.addEventListener("click", () => spawnBatch(12));
   autoplayBtn.addEventListener("click", toggleAutoplay);
   exportBtn.addEventListener("click", exportCurrentPng);
+  shareBtn.addEventListener("click", () => {
+    sharePayload(getCurrentSharePayload(), shareBtn);
+  });
 
   saveBtn.addEventListener("click", toggleSave);
   prevBtn.addEventListener("click", navigateOlder);
@@ -2758,10 +4054,16 @@ function bindEvents() {
   menuToggleBtn.addEventListener("click", () => setMenuOpen(!state.menuOpen));
   menuCloseBtn.addEventListener("click", () => setMenuOpen(false));
   menuBackdrop.addEventListener("click", () => setMenuOpen(false));
+  composerResizeHandleEl.addEventListener("pointerdown", startComposerMenuResize);
+  composerResizeHandleEl.addEventListener("pointermove", handleComposerMenuResize);
+  composerResizeHandleEl.addEventListener("pointerup", stopComposerMenuResize);
+  composerResizeHandleEl.addEventListener("pointercancel", stopComposerMenuResize);
 
   viewerEl.addEventListener("touchstart", handleSwipeStart, { passive: true });
   viewerEl.addEventListener("touchend", handleSwipeEnd, { passive: true });
   window.addEventListener("keydown", handleKeydown);
+  generatorModeBtn.addEventListener("click", () => setAppMode(APP_MODE_GENERATOR));
+  composerModeBtn.addEventListener("click", () => setAppMode(APP_MODE_COMPOSER));
 
   complexityRange.addEventListener("input", () => {
     state.options.complexity = Number(complexityRange.value);
@@ -2796,27 +4098,113 @@ function bindEvents() {
     setPrincipleEnabled(target.dataset.principleId, target.checked);
   });
 
+  customNameInput.addEventListener("input", () => {
+    updateCurrentCustom((current) => {
+      current.name = customNameInput.value.slice(0, 48);
+    }, { syncControls: false, renderLayers: false });
+    setCustomStatus("Name updated.");
+  });
+
+  customBackgroundInput.addEventListener("input", () => {
+    updateCurrentCustom((current) => {
+      current.backgroundColor = customBackgroundInput.value;
+    }, { syncControls: false, renderLayers: false });
+    setCustomStatus("Background color updated.");
+  });
+
+  customSchemeSelect.addEventListener("change", () => {
+    updateCurrentCustom((current) => {
+      current.schemeId = customSchemeSelect.value;
+    }, { syncControls: false, renderLayers: false });
+    setCustomStatus("Overall color scheme updated.");
+  });
+
+  customNewBtn.addEventListener("click", createNewCustomDraft);
+  customSaveBtn.addEventListener("click", saveCurrentCustomComposition);
+  customShareBtn.addEventListener("click", () => {
+    sharePayload(getCurrentSharePayload(), customShareBtn, "Share link copied for this composition.");
+  });
+
+  elementPickerEl.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-add-element]") : null;
+    if (!button) {
+      return;
+    }
+
+    updateCurrentCustom((current) => {
+      current.layers.push(makeCustomLayer(button.dataset.addElement));
+    });
+    setCustomStatus("Added a new top layer.");
+  });
+
+  savedCustomListEl.addEventListener("click", (event) => {
+    const shareButton = event.target instanceof Element ? event.target.closest("[data-share-custom]") : null;
+    if (shareButton) {
+      const custom = state.customCompositions.find((item) => item.id === shareButton.dataset.shareCustom);
+      if (custom) {
+        const shared = cloneJson(custom);
+        shared.id = null;
+        sharePayload(
+          {
+            version: 1,
+            mode: APP_MODE_COMPOSER,
+            item: shared,
+          },
+          shareButton,
+          `Share link copied for ${custom.name}.`
+        );
+      }
+      return;
+    }
+
+    const button = event.target instanceof Element ? event.target.closest("[data-load-custom]") : null;
+    if (!button) {
+      return;
+    }
+    loadCustomComposition(button.dataset.loadCustom);
+  });
+
+  layerListEl.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-remove-layer]") : null;
+    if (!button) {
+      return;
+    }
+
+    updateCurrentCustom((current) => {
+      current.layers = current.layers.filter((layer) => layer.id !== button.dataset.removeLayer);
+    });
+    setCustomStatus("Layer removed.");
+  });
+
+  layerListEl.addEventListener("input", handleLayerEditorInput);
+  layerListEl.addEventListener("change", handleLayerEditorInput);
+
   window.addEventListener("resize", () => {
+    applyMenuWidth();
     resizeCanvas();
+    resizeComposerPreviewCanvas();
   });
 }
 
 function runAnimation(now) {
-  const current = getCurrentIllusion();
+  const currentIllusion = getCurrentIllusion();
 
-  if (current && now - state.frameGate >= 30) {
+  if (now - state.frameGate >= 30) {
     state.frameGate = now;
-    renderIllusion(current, canvas, now, false);
+    renderActiveScene(canvas, now, false);
+    if (state.appMode === APP_MODE_COMPOSER && composerPreviewCanvas && !composerPanelEl.hidden) {
+      renderCustomComposition(getCurrentCustomComposition(), composerPreviewCanvas, now, false);
+    }
   }
 
-  if (state.autoplay) {
+  if (state.appMode === APP_MODE_GENERATOR && state.autoplay) {
     if (!state.lastAutoplayAt) {
       state.lastAutoplayAt = now;
     }
 
     if (now - state.lastAutoplayAt > 2600) {
       state.lastAutoplayAt = now;
-      const mode = current && Math.random() < 0.55 ? "evolve" : "fresh";
+      const mode = currentIllusion && Math.random() < 0.55 ? "evolve" : "fresh";
       spawnOne(mode);
     }
   }
@@ -2826,16 +4214,22 @@ function runAnimation(now) {
 
 function bootstrap() {
   restoreState();
+  hydrateFromShareLink();
   renderResearchList();
+  renderElementPicker();
+  renderSavedCustomList();
+  renderLayerList();
 
   complexityRange.value = String(state.options.complexity);
   motionRange.value = String(state.options.motion);
   noveltyRange.value = String(Math.round(state.options.noveltyBias * 100));
   syncControlReadouts();
+  syncCustomControls();
 
   resizeCanvas();
   bindEvents();
   setMenuOpen(false);
+  setAppMode(state.appMode);
 
   if (!state.discoveries.length) {
     spawnBatch(14);
@@ -2849,6 +4243,14 @@ function bootstrap() {
     }
     updateInterface();
   }
+
+  if (!state.customDraft) {
+    state.customDraft = makeEmptyCustomComposition();
+    syncCustomControls();
+    renderLayerList();
+  }
+
+  resizeComposerPreviewCanvas();
 
   requestAnimationFrame(runAnimation);
 }

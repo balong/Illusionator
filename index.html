@@ -50,6 +50,7 @@
 
     <aside id="sideMenu" class="side-menu" aria-hidden="true">
         <div class="drawer-sigil" aria-hidden="true"></div>
+      <div id="composerResizeHandle" class="composer-resize-handle" hidden aria-hidden="true"></div>
       <div class="drawer-inner">
         <div class="menu-head">
           <div class="menu-title-block">
@@ -61,25 +62,39 @@
         </div>
 
         <section class="menu-block">
+          <span class="section-kicker">Mode</span>
+          <h2>Workspace</h2>
+          <div class="mode-switch" role="tablist" aria-label="Workspace mode">
+            <button id="generatorModeBtn" class="mode-btn active" type="button" data-app-mode="generator" aria-pressed="true">
+              Generator
+            </button>
+            <button id="composerModeBtn" class="mode-btn" type="button" data-app-mode="composer" aria-pressed="false">
+              Composer
+            </button>
+          </div>
+          <p class="range-note">Switch between the research generator and your own layered custom compositions.</p>
+        </section>
+
+        <section class="menu-block">
           <span class="section-kicker">Session</span>
           <h2>Saved Designs</h2>
           <div class="session-stats">
             <div>
-              <span>Designs</span>
+              <span id="discoveryCountLabel">Designs</span>
               <strong id="discoveryCount">0</strong>
             </div>
             <div>
-              <span>Saved</span>
+              <span id="savedCountLabel">Saved</span>
               <strong id="savedCount">0</strong>
             </div>
             <div>
-              <span>Autoplay</span>
+              <span id="autoplayStateLabel">Autoplay</span>
               <strong id="autoplayState">Off</strong>
             </div>
           </div>
         </section>
 
-        <section class="menu-block">
+        <section class="menu-block mode-panel" data-mode-panel="generator">
           <span class="section-kicker">Actions</span>
           <h2>Create Designs</h2>
           <div class="control-grid">
@@ -88,10 +103,11 @@
             <button id="batchBtn" type="button">Generate Batch</button>
             <button id="autoplayBtn" type="button">Start Autoplay</button>
             <button id="exportBtn" type="button">Export PNG</button>
+            <button id="shareBtn" type="button">Share Link</button>
           </div>
         </section>
 
-        <section class="menu-block">
+        <section class="menu-block mode-panel" data-mode-panel="generator">
           <span class="section-kicker">Settings</span>
           <h2>Generation Controls</h2>
 
@@ -123,7 +139,70 @@
           </div>
         </section>
 
-        <section class="menu-block">
+        <section id="composerPanel" class="menu-block mode-panel composer-panel" data-mode-panel="composer" hidden>
+          <span class="section-kicker">Composer</span>
+          <h2>Custom Layout</h2>
+
+          <div class="composer-toolbar">
+            <label class="field-stack">
+              <span>Name</span>
+              <input id="customNameInput" class="text-input" type="text" maxlength="48" placeholder="Untitled composition" />
+            </label>
+            <div class="composer-button-row">
+              <button id="customNewBtn" type="button">New Blank</button>
+              <button id="customSaveBtn" type="button">Save Composition</button>
+              <button id="customShareBtn" type="button">Share Link</button>
+            </div>
+            <p id="customStatus" class="range-note">Draft changes update the preview immediately.</p>
+          </div>
+
+          <div class="composer-workspace">
+            <div class="composer-editor">
+              <section class="composer-section">
+                <div class="subsection-head">
+                  <h3>Canvas</h3>
+                  <span class="subsection-note">Background plus overall palette</span>
+                </div>
+                <div class="field-grid">
+                  <label class="field-stack">
+                    <span>Background</span>
+                    <input id="customBackgroundInput" class="color-input" type="color" value="#080c14" />
+                  </label>
+                  <label class="field-stack">
+                    <span>Color Scheme</span>
+                    <select id="customSchemeSelect" class="select-input"></select>
+                  </label>
+                </div>
+              </section>
+
+              <section class="composer-section">
+                <div class="subsection-head">
+                  <h3>Add Layer</h3>
+                  <span class="subsection-note">New elements are inserted as the top layer</span>
+                </div>
+                <div id="elementPicker" class="element-picker" aria-label="Element picker"></div>
+              </section>
+
+              <section class="composer-section">
+                <div class="subsection-head">
+                  <h3>Saved Compositions</h3>
+                  <span class="subsection-note">Select one to continue editing</span>
+                </div>
+                <div id="savedCustomList" class="saved-custom-list"></div>
+              </section>
+
+              <section class="composer-section">
+                <div class="subsection-head">
+                  <h3>Layers</h3>
+                  <span id="layerSummary" class="subsection-note">0 layers</span>
+                </div>
+                <div id="layerList" class="layer-list"></div>
+              </section>
+            </div>
+          </div>
+        </section>
+
+        <section class="menu-block mode-panel" data-mode-panel="generator">
           <span class="section-kicker">Sources</span>
           <h2>Illusion Types</h2>
           <p id="researchMixMeta" class="research-mix-meta"></p>
