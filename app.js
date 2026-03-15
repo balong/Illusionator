@@ -1978,15 +1978,13 @@ function getStripeTile(spacing, stripeWidth, stripeColor, backgroundColor = null
 }
 
 function getStripeSprite(width, height, spacing, stripeWidth, stripeColor, backgroundColor = null) {
-  const drawWidth = Math.max(1, Math.ceil(width));
-  const drawHeight = Math.max(1, Math.ceil(height));
+  const drawSpan = Math.max(1, Math.ceil(Math.hypot(width, height) * 1.2));
   const step = Math.max(4, spacing);
   const lineWidth = Math.max(1.5, stripeWidth);
   const period = step;
-  const spriteWidth = Math.max(drawWidth + Math.ceil(period + lineWidth * 2), 2);
+  const spriteWidth = Math.max(drawSpan + Math.ceil(period + lineWidth * 2), 2);
   const key = [
-    drawWidth,
-    drawHeight,
+    drawSpan,
     step.toFixed(2),
     lineWidth.toFixed(2),
     stripeColor,
@@ -1999,26 +1997,25 @@ function getStripeSprite(width, height, spacing, stripeWidth, stripeColor, backg
 
   const sprite = document.createElement("canvas");
   sprite.width = spriteWidth;
-  sprite.height = drawHeight;
+  sprite.height = drawSpan;
   const spriteCtx = sprite.getContext("2d");
 
   if (backgroundColor) {
     spriteCtx.fillStyle = backgroundColor;
-    spriteCtx.fillRect(0, 0, spriteWidth, drawHeight);
+    spriteCtx.fillRect(0, 0, spriteWidth, drawSpan);
   } else {
-    spriteCtx.clearRect(0, 0, spriteWidth, drawHeight);
+    spriteCtx.clearRect(0, 0, spriteWidth, drawSpan);
   }
 
   spriteCtx.fillStyle = stripeColor;
   for (let x = 0; x <= spriteWidth + step; x += step) {
-    spriteCtx.fillRect(x, 0, lineWidth, drawHeight);
+    spriteCtx.fillRect(x, 0, lineWidth, drawSpan);
   }
 
   const cached = {
     canvas: sprite,
     period,
-    drawWidth,
-    drawHeight,
+    drawSpan,
   };
   stripeSpriteCache.set(key, cached);
   return cached;
@@ -2066,12 +2063,12 @@ function drawStripeSprite(ctx, width, height, spacing, angle, stripeWidth, strip
     sprite.canvas,
     scroll,
     0,
-    sprite.drawWidth,
-    sprite.drawHeight,
-    -width * 0.5,
-    -height * 0.5,
-    width,
-    height
+    sprite.drawSpan,
+    sprite.drawSpan,
+    -sprite.drawSpan * 0.5,
+    -sprite.drawSpan * 0.5,
+    sprite.drawSpan,
+    sprite.drawSpan
   );
   ctx.restore();
 }
@@ -2258,8 +2255,21 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
     [toneShift(palette.accents[1], 0, 4, 8), toneShift(palette.accents[3], 0, -4, 10)],
   ];
   if (compactRender) {
-    ctx.fillStyle = cssTone(darkBase, 0.98);
-    ctx.fillRect(0, 0, width, height);
+    ctx.save();
+    ctx.translate(width * 0.5, height * 0.5);
+    drawStripeSprite(
+      ctx,
+      width,
+      height,
+      params.backgroundSpacing,
+      params.bandAngle + Math.PI * 0.5,
+      params.backgroundSpacing * 0.2,
+      cssTone(backgroundLine, 0.08),
+      cssTone(darkBase, 0.98),
+      time * params.backgroundDrift,
+      6
+    );
+    ctx.restore();
   } else {
     drawStripeField(
       ctx,
@@ -2279,9 +2289,9 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
   const axisY = Math.sin(params.bandAngle);
   const normalX = -axisY;
   const normalY = axisX;
-  const bandCount = compactRender ? Math.min(params.bands, 2) : params.bands;
-  const slabW = span * (compactRender ? Math.min(params.slabLength, 1.9) : params.slabLength);
-  const baseSlabH = height * (compactRender ? Math.min(params.slabHeight, 0.44) : params.slabHeight);
+  const bandCount = params.bands;
+  const slabW = span * params.slabLength;
+  const baseSlabH = height * params.slabHeight;
   const laneStep = baseSlabH * params.laneOverlap;
   const centerX = width * 0.5;
   const centerY = height * 0.5;
@@ -2290,10 +2300,9 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
   for (let i = 0; i < bandCount; i += 1) {
     const direction = i % 2 === 0 ? 1 : -1;
     const motionPhase = time * params.slabTravel * (0.42 + illusion.motionStrength * 0.18) + i * 1.05;
-    const bob = compactRender ? 0 : Math.sin(motionPhase) * height * params.slabBob * direction;
-    const sway = compactRender ? 0 : Math.cos(motionPhase * 0.78 + i * 0.33) * width * params.slabSway * direction;
-    const depthScale =
-      compactRender ? 1 : 1 + Math.cos(motionPhase * 0.92 + i * 0.4) * params.depthPulse;
+    const bob = Math.sin(motionPhase) * height * params.slabBob * direction;
+    const sway = Math.cos(motionPhase * 0.78 + i * 0.33) * width * params.slabSway * direction;
+    const depthScale = 1 + Math.cos(motionPhase * 0.92 + i * 0.4) * params.depthPulse;
     const slabH = baseSlabH * depthScale;
     const laneOffset = lanePattern[i] * laneStep;
     const cx = centerX + normalX * laneOffset + sway;
@@ -2307,7 +2316,7 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
     const stripePhase = time * params.stripeDrift * (0.58 + illusion.motionStrength * 0.24);
     const primaryStripeDrift = direction * stripePhase;
     const secondaryStripeDrift = -direction * stripePhase * 0.82;
-    const ghostCount = compactRender ? 0 : params.ghosts;
+    const ghostCount = params.ghosts;
 
     ctx.save();
     ctx.translate(cx, cy);
@@ -2337,6 +2346,18 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
         cssTone(slabFill, 0.46),
         primaryStripeDrift
       );
+      drawStripeSprite(
+        ctx,
+        slabW,
+        slabH,
+        params.stripeSpacing * 1.08,
+        params.stripeAngle - direction * 0.035,
+        params.stripeWidth * 0.72,
+        cssTone(secondaryStripe, 0.38),
+        null,
+        secondaryStripeDrift,
+        8
+      );
     } else {
       fillStripePattern(
         ctx,
@@ -2349,8 +2370,6 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
         cssTone(slabFill, 0.46),
         primaryStripeDrift
       );
-    }
-    if (!compactRender) {
       fillStripePattern(
         ctx,
         slabW,
