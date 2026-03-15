@@ -2190,21 +2190,8 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
     [toneShift(palette.accents[1], 0, 4, 8), toneShift(palette.accents[3], 0, -4, 10)],
   ];
   if (compactRender) {
-    ctx.save();
-    ctx.translate(width * 0.5, height * 0.5);
-    fillStripePattern(
-      ctx,
-      width,
-      height,
-      params.backgroundSpacing,
-      params.bandAngle + Math.PI * 0.5,
-      params.backgroundSpacing * 0.18,
-      cssTone(backgroundLine, 0.08),
-      cssTone(darkBase, 0.98),
-      time * params.backgroundDrift,
-      6
-    );
-    ctx.restore();
+    ctx.fillStyle = cssTone(darkBase, 0.98);
+    ctx.fillRect(0, 0, width, height);
   } else {
     drawStripeField(
       ctx,
@@ -2225,8 +2212,8 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
   const normalX = -axisY;
   const normalY = axisX;
   const bandCount = compactRender ? Math.min(params.bands, 2) : params.bands;
-  const slabW = span * (compactRender ? Math.min(params.slabLength, 2.15) : params.slabLength);
-  const baseSlabH = height * params.slabHeight;
+  const slabW = span * (compactRender ? Math.min(params.slabLength, 1.9) : params.slabLength);
+  const baseSlabH = height * (compactRender ? Math.min(params.slabHeight, 0.44) : params.slabHeight);
   const laneStep = baseSlabH * params.laneOverlap;
   const centerX = width * 0.5;
   const centerY = height * 0.5;
@@ -2235,9 +2222,10 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
   for (let i = 0; i < bandCount; i += 1) {
     const direction = i % 2 === 0 ? 1 : -1;
     const motionPhase = time * params.slabTravel * (0.42 + illusion.motionStrength * 0.18) + i * 1.05;
-    const bob = Math.sin(motionPhase) * height * params.slabBob * direction;
-    const sway = Math.cos(motionPhase * 0.78 + i * 0.33) * width * params.slabSway * direction;
-    const depthScale = 1 + Math.cos(motionPhase * 0.92 + i * 0.4) * params.depthPulse;
+    const bob = compactRender ? 0 : Math.sin(motionPhase) * height * params.slabBob * direction;
+    const sway = compactRender ? 0 : Math.cos(motionPhase * 0.78 + i * 0.33) * width * params.slabSway * direction;
+    const depthScale =
+      compactRender ? 1 : 1 + Math.cos(motionPhase * 0.92 + i * 0.4) * params.depthPulse;
     const slabH = baseSlabH * depthScale;
     const laneOffset = lanePattern[i] * laneStep;
     const cx = centerX + normalX * laneOffset + sway;
@@ -2280,18 +2268,20 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
       cssTone(slabFill, 0.46),
       primaryStripeDrift
     );
-    fillStripePattern(
-      ctx,
-      slabW,
-      slabH,
-      params.stripeSpacing * 1.08,
-      params.stripeAngle - direction * 0.035,
-      params.stripeWidth * 0.72,
-      cssTone(secondaryStripe, 0.38),
-      null,
-      secondaryStripeDrift,
-      8
-    );
+    if (!compactRender) {
+      fillStripePattern(
+        ctx,
+        slabW,
+        slabH,
+        params.stripeSpacing * 1.08,
+        params.stripeAngle - direction * 0.035,
+        params.stripeWidth * 0.72,
+        cssTone(secondaryStripe, 0.38),
+        null,
+        secondaryStripeDrift,
+        8
+      );
+    }
     ctx.restore();
 
     pathRoundedRect(ctx, -slabW * 0.5, -slabH * 0.5, slabW, slabH, corner);
