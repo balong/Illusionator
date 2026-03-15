@@ -101,6 +101,34 @@ const researchPrinciples = [
     draw: drawMoireField,
   },
   {
+    id: "barber_pole_shear",
+    name: "Barber Pole Shear",
+    mechanism:
+      "Stripe motion inside giant angled apertures conflicts with the outer slab direction, producing sliding and extrusion.",
+    alphaRange: [0.74, 0.9],
+    preferredBlends: ["source-over", "screen"],
+    sample: (rng, options) => ({
+      bands: rng.next() < 0.72 ? 3 : 2,
+      bandAngle: rng.float(-0.92, 0.92),
+      stripeAngle: rng.float(-0.08, 0.08),
+      stripeSpacing: rng.float(8.5, 12.5),
+      stripeWidth: rng.float(2.4, 4.2),
+      stripeDrift: rng.float(0.14, 0.24 + options.motion * 0.02),
+      backgroundSpacing: rng.float(28, 38),
+      backgroundDrift: rng.float(0.025, 0.07 + options.motion * 0.012),
+      slabHeight: rng.float(0.4, 0.52),
+      slabLength: rng.float(2.7, 3.3),
+      slabTravel: rng.float(0.06, 0.12 + options.motion * 0.012),
+      slabBob: rng.float(0.018, 0.038),
+      slabSway: rng.float(0.02, 0.05),
+      depthPulse: rng.float(0.025, 0.055),
+      laneOverlap: rng.float(0.58, 0.68),
+      corner: rng.float(0.08, 0.18),
+      ghosts: 1,
+    }),
+    draw: drawBarberPoleShear,
+  },
+  {
     id: "cafe_wall",
     name: "Cafe Wall Distortion",
     mechanism:
@@ -2161,31 +2189,50 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
     [toneShift(palette.accents[0], 0, 6, 10), toneShift(palette.accents[2], 0, -2, 6)],
     [toneShift(palette.accents[1], 0, 4, 8), toneShift(palette.accents[3], 0, -4, 10)],
   ];
-  drawStripeField(
-    ctx,
-    width,
-    height,
-    params.backgroundSpacing,
-    params.bandAngle + Math.PI * 0.5,
-    params.backgroundSpacing * 0.2,
-    cssTone(backgroundLine, 0.08),
-    cssTone(darkBase, 0.98),
-    time * params.backgroundDrift
-  );
+  if (compactRender) {
+    ctx.save();
+    ctx.translate(width * 0.5, height * 0.5);
+    fillStripePattern(
+      ctx,
+      width,
+      height,
+      params.backgroundSpacing,
+      params.bandAngle + Math.PI * 0.5,
+      params.backgroundSpacing * 0.18,
+      cssTone(backgroundLine, 0.08),
+      cssTone(darkBase, 0.98),
+      time * params.backgroundDrift,
+      6
+    );
+    ctx.restore();
+  } else {
+    drawStripeField(
+      ctx,
+      width,
+      height,
+      params.backgroundSpacing,
+      params.bandAngle + Math.PI * 0.5,
+      params.backgroundSpacing * 0.2,
+      cssTone(backgroundLine, 0.08),
+      cssTone(darkBase, 0.98),
+      time * params.backgroundDrift
+    );
+  }
 
   const span = Math.hypot(width, height);
   const axisX = Math.cos(params.bandAngle);
   const axisY = Math.sin(params.bandAngle);
   const normalX = -axisY;
   const normalY = axisX;
-  const slabW = span * params.slabLength;
+  const bandCount = compactRender ? Math.min(params.bands, 2) : params.bands;
+  const slabW = span * (compactRender ? Math.min(params.slabLength, 2.15) : params.slabLength);
   const baseSlabH = height * params.slabHeight;
   const laneStep = baseSlabH * params.laneOverlap;
   const centerX = width * 0.5;
   const centerY = height * 0.5;
-  const lanePattern = params.bands === 2 ? [-0.46, 0.46] : [-0.72, 0, 0.72];
+  const lanePattern = bandCount === 2 ? [-0.46, 0.46] : [-0.72, 0, 0.72];
 
-  for (let i = 0; i < params.bands; i += 1) {
+  for (let i = 0; i < bandCount; i += 1) {
     const direction = i % 2 === 0 ? 1 : -1;
     const motionPhase = time * params.slabTravel * (0.42 + illusion.motionStrength * 0.18) + i * 1.05;
     const bob = Math.sin(motionPhase) * height * params.slabBob * direction;
