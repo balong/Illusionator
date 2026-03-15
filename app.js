@@ -7,6 +7,10 @@ const QUALITY_PROBE_WIDTH = 176;
 const QUALITY_PROBE_HEIGHT = 112;
 const QUALITY_PROBE_BUDGET = 20;
 const MIN_QUALITY_PASSES = 7;
+const COMPOSITION_WIDTH = 1100;
+const COMPOSITION_HEIGHT = 700;
+const MAX_RENDER_DPR = 2;
+const EXPORT_SCALE = 2;
 
 const viewerEl = document.getElementById("viewer");
 const canvas = document.getElementById("illusionCanvas");
@@ -68,11 +72,16 @@ const state = {
   seedCounter: 0,
   menuOpen: false,
   touchStart: null,
+  renderProfile: {
+    live: false,
+    compact: false,
+  },
 };
 
 const qualityProbeCanvas = document.createElement("canvas");
 qualityProbeCanvas.width = QUALITY_PROBE_WIDTH;
 qualityProbeCanvas.height = QUALITY_PROBE_HEIGHT;
+const stripeTileCache = new Map();
 
 const researchPrinciples = [
   {
@@ -1450,7 +1459,7 @@ function toggleFavorite() {
 
 function resizeCanvas() {
   const rect = canvas.getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = Math.min(window.devicePixelRatio || 1, MAX_RENDER_DPR);
 
   const targetWidth = Math.max(320, Math.round(rect.width * dpr));
   const targetHeight = Math.max(220, Math.round(rect.height * dpr));
@@ -1498,6 +1507,19 @@ function drawVignette(ctx, width, height, palette) {
   ctx.fillRect(0, 0, width, height);
 }
 
+function getCompositionFrame(targetCanvas, width, height) {
+  const compositionWidth = COMPOSITION_WIDTH;
+  const compositionHeight = COMPOSITION_HEIGHT;
+  const scale = Math.max(width / compositionWidth, height / compositionHeight);
+  return {
+    width: compositionWidth,
+    height: compositionHeight,
+    scale,
+    offsetX: (width - compositionWidth * scale) / 2,
+    offsetY: (height - compositionHeight * scale) / 2,
+  };
+}
+
 function renderIllusion(illusion, targetCanvas, now = 0, staticFrame = false) {
   if (!illusion) {
     return;
@@ -1506,52 +1528,109 @@ function renderIllusion(illusion, targetCanvas, now = 0, staticFrame = false) {
   const width = targetCanvas.width;
   const height = targetCanvas.height;
   const time = (now / 1000) * (0.32 + illusion.motionStrength * 0.95);
+  const frame = getCompositionFrame(targetCanvas, width, height);
+  const compositionWidth = frame.width;
+  const compositionHeight = frame.height;
+  const fillsViewport = targetCanvas === canvas;
+  const previousRenderProfile = state.renderProfile;
+  state.renderProfile = {
+    live: fillsViewport,
+    compact:
+      fillsViewport &&
+      Math.min(canvas.getBoundingClientRect().width || width, canvas.getBoundingClientRect().height || height) <= 900,
+  };
 
-  ctx.clearRect(0, 0, width, height);
-  drawBackground(ctx, width, height, illusion.palette);
+  try {
+    ctx.clearRect(0, 0, width, height);
+    if (fillsViewport) {
+      drawBackground(ctx, width, height, illusion.palette);
+    }
+    ctx.save();
+    ctx.translate(frame.offsetX, frame.offsetY);
+    ctx.scale(frame.scale, frame.scale);
+    ctx.beginPath();
+    ctx.rect(0, 0, compositionWidth, compositionHeight);
+    ctx.clip();
 
-  for (const layer of illusion.layers) {
-    const profile = researchById[layer.principleId];
-    if (!profile) {
-      continue;
+    if (!fillsViewport) {
+      drawBackground(ctx, compositionWidth, compositionHeight, illusion.palette);
     }
 
-    ctx.save();
-    ctx.globalAlpha = layer.alpha;
-    ctx.globalCompositeOperation = layer.blend;
+    for (const layer of illusion.layers) {
+      const profile = researchById[layer.principleId];
+      if (!profile) {
+        continue;
+      }
 
-    ctx.translate(width * (0.5 + layer.offsetX), height * (0.5 + layer.offsetY));
-    ctx.rotate(layer.rotation);
-    ctx.scale(layer.scale, layer.scale);
-    ctx.translate(-width * 0.5, -height * 0.5);
+      ctx.save();
+      ctx.globalAlpha = layer.alpha;
+      ctx.globalCompositeOperation = layer.blend;
 
-    profile.draw(ctx, width, height, layer.params, illusion.palette, staticFrame ? 0 : time, illusion);
+      ctx.translate(compositionWidth * (0.5 + layer.offsetX), compositionHeight * (0.5 + layer.offsetY));
+      ctx.rotate(layer.rotation);
+      ctx.scale(layer.scale, layer.scale);
+      ctx.translate(-compositionWidth * 0.5, -compositionHeight * 0.5);
+
+      profile.draw(
+        ctx,
+        compositionWidth,
+        compositionHeight,
+        layer.params,
+        illusion.palette,
+        staticFrame ? 0 : time,
+        illusion
+      );
+      ctx.restore();
+    }
+
+    if (!fillsViewport) {
+      drawVignette(ctx, compositionWidth, compositionHeight, illusion.palette);
+    }
     ctx.restore();
-  }
 
-  drawVignette(ctx, width, height, illusion.palette);
+    if (fillsViewport) {
+      drawVignette(ctx, width, height, illusion.palette);
+    }
+  } finally {
+    state.renderProfile = previousRenderProfile;
+  }
 }
 
 function drawWaveSet(ctx, width, height, config) {
+  const span = Math.hypot(width, height);
+  const halfSpan = span * 0.56 + Math.max(config.amplitude, config.spacing) * 2;
+  const minX = -halfSpan;
+  const maxX = halfSpan;
+  const minY = -halfSpan;
+  const maxY = halfSpan;
+  const sampleStep = clamp(14 / Math.max(0.65, config.freq) + config.stroke * 0.4, 5, 14);
+
   ctx.save();
   ctx.translate(width * 0.5, height * 0.5);
   ctx.rotate(config.angle);
-  ctx.translate(-width * 0.5, -height * 0.5);
   ctx.strokeStyle = config.color;
   ctx.lineWidth = config.stroke;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
 
-  const stepX = 10;
-  for (let y = -height; y < height * 2; y += config.spacing) {
+  for (let y = minY; y <= maxY; y += config.spacing) {
     ctx.beginPath();
-    for (let x = -width; x <= width * 2; x += stepX) {
-      const wave = Math.sin(x * 0.01 * config.freq + config.phase) * config.amplitude;
-      const yPos = y + wave;
-      if (x === -width) {
-        ctx.moveTo(x, yPos);
-      } else {
-        ctx.lineTo(x, yPos);
-      }
+    let prevX = minX;
+    let wave = Math.sin(prevX * 0.01 * config.freq + config.phase) * config.amplitude;
+    let prevY = y + wave;
+    ctx.moveTo(prevX, prevY);
+
+    for (let x = minX + sampleStep; x <= maxX + sampleStep; x += sampleStep) {
+      const nextX = Math.min(x, maxX);
+      wave = Math.sin(nextX * 0.01 * config.freq + config.phase) * config.amplitude;
+      const nextY = y + wave;
+      const midX = (prevX + nextX) * 0.5;
+      const midY = (prevY + nextY) * 0.5;
+      ctx.quadraticCurveTo(prevX, prevY, midX, midY);
+      prevX = nextX;
+      prevY = nextY;
     }
+    ctx.lineTo(prevX, prevY);
     ctx.stroke();
   }
 
@@ -1830,6 +1909,77 @@ function pathRoundedRect(ctx, x, y, width, height, radius) {
   ctx.closePath();
 }
 
+function getStripeTile(spacing, stripeWidth, stripeColor, backgroundColor = null) {
+  const step = Math.max(4, spacing);
+  const lineWidth = Math.max(1.5, stripeWidth);
+  const tileWidth = Math.max(24, Math.ceil(step * 4));
+  const tileHeight = 96;
+  const key = [
+    tileWidth,
+    tileHeight,
+    step.toFixed(2),
+    lineWidth.toFixed(2),
+    stripeColor,
+    backgroundColor || "",
+  ].join("|");
+
+  if (stripeTileCache.has(key)) {
+    return stripeTileCache.get(key);
+  }
+
+  const tile = document.createElement("canvas");
+  tile.width = tileWidth;
+  tile.height = tileHeight;
+  const tileCtx = tile.getContext("2d");
+
+  if (backgroundColor) {
+    tileCtx.fillStyle = backgroundColor;
+    tileCtx.fillRect(0, 0, tileWidth, tileHeight);
+  } else {
+    tileCtx.clearRect(0, 0, tileWidth, tileHeight);
+  }
+
+  tileCtx.fillStyle = stripeColor;
+  for (let x = -lineWidth; x <= tileWidth + step; x += step) {
+    tileCtx.fillRect(x, 0, lineWidth, tileHeight);
+  }
+
+  stripeTileCache.set(key, tile);
+  return tile;
+}
+
+function fillStripePattern(ctx, width, height, spacing, angle, stripeWidth, stripeColor, backgroundColor = null, drift = 0, driftFactor = 10) {
+  const span = Math.hypot(width, height) * 1.2;
+  const step = Math.max(4, spacing);
+  const tile = getStripeTile(spacing, stripeWidth, stripeColor, backgroundColor);
+
+  ctx.save();
+  ctx.rotate(angle);
+
+  const pattern = ctx.createPattern(tile, "repeat");
+  if (pattern?.setTransform) {
+    pattern.setTransform(new DOMMatrix().translateSelf(drift * step * driftFactor, 0));
+  }
+
+  if (pattern) {
+    ctx.fillStyle = pattern;
+    ctx.fillRect(-span, -span, span * 2, span * 2);
+  } else {
+    if (backgroundColor) {
+      ctx.fillStyle = backgroundColor;
+      ctx.fillRect(-span, -span, span * 2, span * 2);
+    }
+    ctx.fillStyle = stripeColor;
+    const lineWidth = Math.max(1.5, stripeWidth);
+    const scroll = drift * step * driftFactor;
+    for (let x = -span; x <= span; x += step) {
+      ctx.fillRect(x + scroll, -span, lineWidth, span * 2);
+    }
+  }
+
+  ctx.restore();
+}
+
 function drawStripeField(ctx, width, height, spacing, angle, stripeWidth, stripeColor, bgColor, drift = 0) {
   const span = Math.hypot(width, height);
 
@@ -1852,6 +2002,260 @@ function drawStripeField(ctx, width, height, spacing, angle, stripeWidth, stripe
   ctx.restore();
 }
 
+function drawStripePlane(ctx, width, height, spacing, angle, stripeWidth, stripeColor, backgroundColor = null, drift = 0) {
+  const span = Math.hypot(width, height) * 1.2;
+
+  ctx.save();
+  ctx.rotate(angle);
+
+  if (backgroundColor) {
+    ctx.fillStyle = backgroundColor;
+    ctx.fillRect(-span, -span, span * 2, span * 2);
+  }
+
+  ctx.fillStyle = stripeColor;
+  const step = Math.max(4, spacing);
+  const lineWidth = Math.max(1.5, stripeWidth);
+  const scroll = drift * step * 10;
+  for (let x = -span; x <= span; x += step) {
+    const wobble = Math.sin((x / step) * 0.66 + drift) * step * 0.16;
+    ctx.fillRect(x + scroll + wobble, -span, lineWidth, span * 2);
+  }
+
+  ctx.restore();
+}
+
+function drawCausticWaveMesh(ctx, width, height, params, palette, time, illusion) {
+  const base = toneShift(palette.bgA, 0, -14, -10);
+  ctx.fillStyle = cssTone(base, 0.98);
+  ctx.fillRect(0, 0, width, height);
+
+  const veilAngle = params.angleA * 0.45 + params.angleB * 0.2;
+  const veilSpan = Math.hypot(width, height);
+  const veilDrift = time * params.drift * veilSpan * 0.08;
+  ctx.save();
+  ctx.translate(width * 0.5, height * 0.5);
+  ctx.rotate(veilAngle);
+  ctx.translate(-width * 0.5, -height * 0.5);
+  for (let i = -1; i <= params.veilBands; i += 1) {
+    const bandWidth = veilSpan / Math.max(3, params.veilBands + 1);
+    const x = i * bandWidth + veilDrift;
+    const gradient = ctx.createLinearGradient(x, 0, x + bandWidth, 0);
+    gradient.addColorStop(0, cssTone(palette.accents[i & 3], 0));
+    gradient.addColorStop(0.5, cssTone(toneShift(palette.accents[(i + 1) & 3], 0, -12, 6), 0.08));
+    gradient.addColorStop(1, cssTone(palette.accents[(i + 2) & 3], 0));
+    ctx.fillStyle = gradient;
+    ctx.fillRect(x, -veilSpan * 0.35, bandWidth, veilSpan * 1.7);
+  }
+  ctx.restore();
+
+  const phase = time * params.drift * (0.65 + illusion.motionStrength);
+  drawWaveSet(ctx, width, height, {
+    angle: params.angleA,
+    spacing: params.spacing,
+    amplitude: params.amplitude,
+    freq: params.freq,
+    phase,
+    stroke: params.stroke,
+    color: cssTone(palette.accents[0], 0.42),
+  });
+  drawWaveSet(ctx, width, height, {
+    angle: params.angleB,
+    spacing: params.spacing * 0.95,
+    amplitude: params.amplitude * 0.88,
+    freq: params.freq * 1.15,
+    phase: -phase * 1.2,
+    stroke: params.stroke * 0.96,
+    color: cssTone(palette.accents[2], 0.34),
+  });
+  drawWaveSet(ctx, width, height, {
+    angle: params.angleC,
+    spacing: params.spacing * 1.12,
+    amplitude: params.amplitude * 0.74,
+    freq: params.freq * 0.82,
+    phase: phase * 0.72 + Math.PI * 0.25,
+    stroke: params.stroke * 0.9,
+    color: cssTone(toneShift(palette.ink, 0, -24, -10), 0.22),
+  });
+}
+
+function drawParallaxTileDrift(ctx, width, height, params, palette, time) {
+  const darkBase = toneShift(palette.bgA, 0, -12, -10);
+  drawStripeField(
+    ctx,
+    width,
+    height,
+    params.fieldSpacing,
+    params.fieldAngle,
+    params.fieldWidth,
+    cssTone(palette.accents[2], 0.2),
+    cssTone(darkBase, 0.98),
+    time * params.fieldDrift
+  );
+  drawStripeField(
+    ctx,
+    width,
+    height,
+    params.fieldSpacing * 1.16,
+    params.fieldAngle + params.crossAngle,
+    params.fieldWidth * 0.36,
+    cssTone(palette.accents[0], 0.14),
+    cssTone(darkBase, 0),
+    -time * params.fieldDrift * 0.7
+  );
+
+  const tileW = width / params.cols;
+  const tileH = height / params.rows;
+  const depths = [
+    { tone: palette.accents[3], alpha: 0.1, scale: 0.92, drift: -0.72 },
+    { tone: palette.ink, alpha: 0.16, scale: 1.04, drift: 1 },
+    { tone: palette.accents[1], alpha: 0.12, scale: 0.78, drift: -1.26 },
+  ];
+  const driftAngle = params.fieldAngle + params.crossAngle * 0.4;
+  const driftUnitX = Math.cos(driftAngle);
+  const driftUnitY = Math.sin(driftAngle);
+
+  for (let depth = 0; depth < depths.length; depth += 1) {
+    const profile = depths[depth];
+    const slide = time * params.tileDrift * tileW * profile.drift;
+    const shiftX = driftUnitX * slide;
+    const shiftY = driftUnitY * slide;
+    for (let row = -2; row <= params.rows + 1; row += 1) {
+      for (let col = -2; col <= params.cols + 1; col += 1) {
+        const noiseA = Math.sin((row + 1) * 3.41 + (col + 1) * 1.73 + depth * 2.11) * 0.5 + 0.5;
+        const noiseB = Math.cos((row + 1) * 1.87 - (col + 1) * 2.31 + depth * 1.17) * 0.5 + 0.5;
+        const panelW = tileW * profile.scale * (0.66 + noiseA * params.tileScale * 0.72);
+        const panelH = tileH * (0.44 + noiseB * 0.88);
+        const x = (col + 0.5) * tileW + shiftX + Math.sin(row * 0.62 + depth) * tileW * 0.22;
+        const y = (row + 0.5) * tileH + shiftY + Math.cos(col * 0.58 + depth) * tileH * 0.16;
+        const rotation = params.tilt * (noiseA - 0.5) * (depth % 2 === 0 ? -1 : 1);
+
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(rotation);
+        pathRoundedRect(
+          ctx,
+          -panelW * 0.5,
+          -panelH * 0.5,
+          panelW,
+          panelH,
+          Math.min(panelW, panelH) * params.corner
+        );
+        ctx.fillStyle = cssTone(profile.tone, profile.alpha + noiseB * 0.06);
+        ctx.fill();
+        ctx.strokeStyle = cssTone(toneShift(profile.tone, 0, -18, 12), 0.12 + noiseA * 0.08);
+        ctx.lineWidth = Math.max(1, Math.min(width, height) * 0.0018);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+  }
+}
+
+function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion) {
+  const compactRender = Boolean(state.renderProfile?.compact);
+  const darkBase = toneShift(palette.bgA, 0, -24, -12);
+  const backgroundLine = toneShift(palette.ink, 0, -22, -6);
+  const slabFillBase = toneShift(palette.bgB, 0, -24, -10);
+  const accentPairs = [
+    [toneShift(palette.accents[0], 0, 6, 10), toneShift(palette.accents[2], 0, -2, 6)],
+    [toneShift(palette.accents[1], 0, 4, 8), toneShift(palette.accents[3], 0, -4, 10)],
+  ];
+  drawStripeField(
+    ctx,
+    width,
+    height,
+    params.backgroundSpacing,
+    params.bandAngle + Math.PI * 0.5,
+    params.backgroundSpacing * 0.2,
+    cssTone(backgroundLine, 0.08),
+    cssTone(darkBase, 0.98),
+    time * params.backgroundDrift
+  );
+
+  const span = Math.hypot(width, height);
+  const axisX = Math.cos(params.bandAngle);
+  const axisY = Math.sin(params.bandAngle);
+  const normalX = -axisY;
+  const normalY = axisX;
+  const slabW = span * params.slabLength;
+  const baseSlabH = height * params.slabHeight;
+  const laneStep = baseSlabH * params.laneOverlap;
+  const centerX = width * 0.5;
+  const centerY = height * 0.5;
+  const lanePattern = params.bands === 2 ? [-0.46, 0.46] : [-0.72, 0, 0.72];
+
+  for (let i = 0; i < params.bands; i += 1) {
+    const direction = i % 2 === 0 ? 1 : -1;
+    const motionPhase = time * params.slabTravel * (0.42 + illusion.motionStrength * 0.18) + i * 1.05;
+    const bob = Math.sin(motionPhase) * height * params.slabBob * direction;
+    const sway = Math.cos(motionPhase * 0.78 + i * 0.33) * width * params.slabSway * direction;
+    const depthScale = 1 + Math.cos(motionPhase * 0.92 + i * 0.4) * params.depthPulse;
+    const slabH = baseSlabH * depthScale;
+    const laneOffset = lanePattern[i] * laneStep;
+    const cx = centerX + normalX * laneOffset + sway;
+    const cy = centerY + normalY * laneOffset * 0.68 + bob;
+    const angle = params.bandAngle;
+    const corner = Math.min(slabW, slabH) * params.corner;
+    const [primaryStripe, secondaryStripe] = accentPairs[i % accentPairs.length];
+    const slabFill = toneShift(slabFillBase, primaryStripe.h - slabFillBase.h, 6, -2);
+    const rimTone = toneShift(primaryStripe, 0, -18, 14);
+    const frameAlpha = 0.012 + (depthScale - 1 + params.depthPulse) * 0.06;
+    const stripePhase = time * params.stripeDrift * (0.58 + illusion.motionStrength * 0.24);
+    const primaryStripeDrift = direction * stripePhase;
+    const secondaryStripeDrift = -direction * stripePhase * 0.82;
+    const ghostCount = compactRender ? 0 : params.ghosts;
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angle);
+    ctx.scale(depthScale, depthScale);
+
+    for (let ghost = ghostCount; ghost >= 1; ghost -= 1) {
+      const ghostOffset = ghost * span * 0.05 * direction;
+      pathRoundedRect(ctx, -slabW * 0.5 + ghostOffset, -slabH * 0.5, slabW, slabH, corner);
+      ctx.strokeStyle = cssTone(rimTone, 0.06);
+      ctx.lineWidth = Math.max(1, Math.min(width, height) * 0.0016);
+      ctx.stroke();
+    }
+
+    pathRoundedRect(ctx, -slabW * 0.5, -slabH * 0.5, slabW, slabH, corner);
+    ctx.save();
+    ctx.clip();
+    fillStripePattern(
+      ctx,
+      slabW,
+      slabH,
+      params.stripeSpacing,
+      params.stripeAngle + direction * 0.025,
+      params.stripeWidth,
+      cssTone(primaryStripe, 0.92),
+      cssTone(slabFill, 0.46),
+      primaryStripeDrift
+    );
+    fillStripePattern(
+      ctx,
+      slabW,
+      slabH,
+      params.stripeSpacing * 1.08,
+      params.stripeAngle - direction * 0.035,
+      params.stripeWidth * 0.72,
+      cssTone(secondaryStripe, 0.38),
+      null,
+      secondaryStripeDrift,
+      8
+    );
+    ctx.restore();
+
+    pathRoundedRect(ctx, -slabW * 0.5, -slabH * 0.5, slabW, slabH, corner);
+    ctx.fillStyle = cssTone(palette.ink, frameAlpha);
+    ctx.fill();
+    ctx.strokeStyle = cssTone(rimTone, 0.18);
+    ctx.lineWidth = Math.max(1.2, Math.min(width, height) * 0.0022);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
 function drawPinnaBrelstaff(ctx, width, height, params, palette, time) {
   const cx = width * 0.5;
   const cy = height * 0.5;
@@ -2330,9 +2734,12 @@ function exportCurrentPng() {
   if (!current) {
     return;
   }
-  renderIllusion(current, canvas, performance.now(), true);
+  const exportCanvas = document.createElement("canvas");
+  exportCanvas.width = COMPOSITION_WIDTH * EXPORT_SCALE;
+  exportCanvas.height = COMPOSITION_HEIGHT * EXPORT_SCALE;
+  renderIllusion(current, exportCanvas, performance.now(), true);
   const link = document.createElement("a");
-  link.href = canvas.toDataURL("image/png");
+  link.href = exportCanvas.toDataURL("image/png");
   link.download = `illusion-${shortSeed(current.seed).replace(/\.+/g, "-")}.png`;
   link.click();
 }
