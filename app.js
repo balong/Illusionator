@@ -9,11 +9,8 @@ const QUALITY_PROBE_BUDGET = 20;
 const MIN_QUALITY_PASSES = 7;
 const COMPOSITION_WIDTH = 1100;
 const COMPOSITION_HEIGHT = 700;
-const MAX_RENDER_DPR = 2;
-const MOBILE_RENDER_DPR = 1.25;
 const MOBILE_COMPOSITION_SCALE = 1.18;
 const MOBILE_VIEWPORT_MAX = 900;
-const FRAME_INTERVAL_MS = 1000 / 60;
 const APP_MODE_GENERATOR = "generator";
 const APP_MODE_COMPOSER = "composer";
 const DEFAULT_COMPOSER_MENU_WIDTH = 980;
@@ -106,22 +103,11 @@ const state = {
   menuOpen: false,
   menuResizeSession: null,
   touchStart: null,
-  viewportProfile: {
-    compact: false,
-    mobile: false,
-    dprCap: MAX_RENDER_DPR,
-  },
-  renderProfile: {
-    live: false,
-    compact: false,
-    mobile: false,
-  },
 };
 
 const qualityProbeCanvas = document.createElement("canvas");
 qualityProbeCanvas.width = QUALITY_PROBE_WIDTH;
 qualityProbeCanvas.height = QUALITY_PROBE_HEIGHT;
-const stripeTileCache = new Map();
 
 const customColorSchemes = [
   {
@@ -489,24 +475,6 @@ const blendModes = [
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
-}
-
-function getViewportProfile() {
-  const rect = canvas.getBoundingClientRect();
-  const viewportWidth = rect.width || window.innerWidth || COMPOSITION_WIDTH;
-  const viewportHeight = rect.height || window.innerHeight || COMPOSITION_HEIGHT;
-  const compact = Math.min(viewportWidth, viewportHeight) <= MOBILE_VIEWPORT_MAX;
-  const coarsePointer =
-    window.matchMedia("(pointer: coarse)").matches ||
-    window.matchMedia("(hover: none)").matches ||
-    (navigator.maxTouchPoints || 0) > 0;
-  const mobile = compact && coarsePointer;
-
-  return {
-    compact,
-    mobile,
-    dprCap: mobile ? MOBILE_RENDER_DPR : MAX_RENDER_DPR,
-  };
 }
 
 function getComposerMenuWidthBounds() {
@@ -2481,11 +2449,7 @@ function resizeCanvas() {
 
 function resizeCanvasToDisplaySize(targetCanvas, minWidth = 240, minHeight = 180) {
   const rect = targetCanvas.getBoundingClientRect();
-  if (targetCanvas === canvas) {
-    state.viewportProfile = getViewportProfile();
-  }
-  const dprCap = targetCanvas === canvas ? state.viewportProfile.dprCap : MAX_RENDER_DPR;
-  const dpr = Math.min(window.devicePixelRatio || 1, dprCap);
+  const dpr = window.devicePixelRatio || 1;
 
   const targetWidth = Math.max(minWidth, Math.round(rect.width * dpr));
   const targetHeight = Math.max(minHeight, Math.round(rect.height * dpr));
@@ -2576,58 +2540,46 @@ function renderIllusion(illusion, targetCanvas, now = 0, staticFrame = false) {
   const frame = getCompositionFrame(targetCanvas, width, height);
   const compositionWidth = frame.width;
   const compositionHeight = frame.height;
-  const fillsViewport = targetCanvas === canvas;
-  const previousRenderProfile = state.renderProfile;
-  const viewportProfile = fillsViewport ? state.viewportProfile : null;
-  state.renderProfile = {
-    live: fillsViewport,
-    compact: Boolean(viewportProfile?.compact),
-    mobile: Boolean(viewportProfile?.mobile),
-  };
 
-  try {
-    ctx.clearRect(0, 0, width, height);
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(0, 0, width, height);
-    ctx.clip();
-    ctx.translate(frame.offsetX, frame.offsetY);
-    ctx.scale(frame.scale, frame.scale);
+  ctx.clearRect(0, 0, width, height);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, width, height);
+  ctx.clip();
+  ctx.translate(frame.offsetX, frame.offsetY);
+  ctx.scale(frame.scale, frame.scale);
 
-    drawBackground(ctx, compositionWidth, compositionHeight, illusion.palette);
+  drawBackground(ctx, compositionWidth, compositionHeight, illusion.palette);
 
-    for (const layer of illusion.layers) {
-      const profile = researchById[layer.principleId];
-      if (!profile) {
-        continue;
-      }
-
-      ctx.save();
-      ctx.globalAlpha = layer.alpha;
-      ctx.globalCompositeOperation = layer.blend;
-
-      ctx.translate(compositionWidth * (0.5 + layer.offsetX), compositionHeight * (0.5 + layer.offsetY));
-      ctx.rotate(layer.rotation);
-      ctx.scale(layer.scale, layer.scale);
-      ctx.translate(-compositionWidth * 0.5, -compositionHeight * 0.5);
-
-      profile.draw(
-        ctx,
-        compositionWidth,
-        compositionHeight,
-        layer.params,
-        illusion.palette,
-        staticFrame ? 0 : time,
-        illusion
-      );
-      ctx.restore();
+  for (const layer of illusion.layers) {
+    const profile = researchById[layer.principleId];
+    if (!profile) {
+      continue;
     }
 
-    drawVignette(ctx, compositionWidth, compositionHeight, illusion.palette);
+    ctx.save();
+    ctx.globalAlpha = layer.alpha;
+    ctx.globalCompositeOperation = layer.blend;
+
+    ctx.translate(compositionWidth * (0.5 + layer.offsetX), compositionHeight * (0.5 + layer.offsetY));
+    ctx.rotate(layer.rotation);
+    ctx.scale(layer.scale, layer.scale);
+    ctx.translate(-compositionWidth * 0.5, -compositionHeight * 0.5);
+
+    profile.draw(
+      ctx,
+      compositionWidth,
+      compositionHeight,
+      layer.params,
+      illusion.palette,
+      staticFrame ? 0 : time,
+      illusion
+    );
     ctx.restore();
-  } finally {
-    state.renderProfile = previousRenderProfile;
   }
+
+  drawVignette(ctx, compositionWidth, compositionHeight, illusion.palette);
+  ctx.restore();
 }
 
 function renderActiveScene(targetCanvas, now = 0, staticFrame = false) {
@@ -3216,88 +3168,6 @@ function pathRoundedRect(ctx, x, y, width, height, radius) {
   ctx.closePath();
 }
 
-function getStripeTile(spacing, stripeWidth, stripeColor, backgroundColor = null) {
-  const step = Math.max(4, spacing);
-  const lineWidth = Math.max(1.5, stripeWidth);
-  const tileWidth = Math.max(24, Math.ceil(step * 4));
-  const tileHeight = 96;
-  const key = [
-    tileWidth,
-    tileHeight,
-    step.toFixed(2),
-    lineWidth.toFixed(2),
-    stripeColor,
-    backgroundColor || "",
-  ].join("|");
-
-  if (stripeTileCache.has(key)) {
-    return stripeTileCache.get(key);
-  }
-
-  const tile = document.createElement("canvas");
-  tile.width = tileWidth;
-  tile.height = tileHeight;
-  const tileCtx = tile.getContext("2d");
-
-  if (backgroundColor) {
-    tileCtx.fillStyle = backgroundColor;
-    tileCtx.fillRect(0, 0, tileWidth, tileHeight);
-  } else {
-    tileCtx.clearRect(0, 0, tileWidth, tileHeight);
-  }
-
-  tileCtx.fillStyle = stripeColor;
-  for (let x = -lineWidth; x <= tileWidth + step; x += step) {
-    tileCtx.fillRect(x, 0, lineWidth, tileHeight);
-  }
-
-  stripeTileCache.set(key, tile);
-  return tile;
-}
-
-function fillStripePattern(
-  ctx,
-  width,
-  height,
-  spacing,
-  angle,
-  stripeWidth,
-  stripeColor,
-  backgroundColor = null,
-  drift = 0,
-  driftFactor = 10
-) {
-  const span = Math.hypot(width, height) * 1.2;
-  const step = Math.max(4, spacing);
-  const tile = getStripeTile(spacing, stripeWidth, stripeColor, backgroundColor);
-
-  ctx.save();
-  ctx.rotate(angle);
-
-  const pattern = ctx.createPattern(tile, "repeat");
-  if (pattern?.setTransform) {
-    pattern.setTransform(new DOMMatrix().translateSelf(drift * step * driftFactor, 0));
-  }
-
-  if (pattern) {
-    ctx.fillStyle = pattern;
-    ctx.fillRect(-span, -span, span * 2, span * 2);
-  } else {
-    if (backgroundColor) {
-      ctx.fillStyle = backgroundColor;
-      ctx.fillRect(-span, -span, span * 2, span * 2);
-    }
-    ctx.fillStyle = stripeColor;
-    const lineWidth = Math.max(1.5, stripeWidth);
-    const scroll = drift * step * driftFactor;
-    for (let x = -span; x <= span; x += step) {
-      ctx.fillRect(x + scroll, -span, lineWidth, span * 2);
-    }
-  }
-
-  ctx.restore();
-}
-
 function drawStripeField(ctx, width, height, spacing, angle, stripeWidth, stripeColor, bgColor, drift = 0) {
   const span = Math.hypot(width, height);
 
@@ -3471,8 +3341,6 @@ function drawParallaxTileDrift(ctx, width, height, params, palette, time) {
 }
 
 function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion) {
-  const compactRender = Boolean(state.renderProfile?.compact);
-  const mobileRender = Boolean(state.renderProfile?.mobile);
   const darkBase = toneShift(palette.bgA, 0, -24, -12);
   const backgroundLine = toneShift(palette.ink, 0, -22, -6);
   const slabFillBase = toneShift(palette.bgB, 0, -24, -10);
@@ -3480,35 +3348,17 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
     [toneShift(palette.accents[0], 0, 6, 10), toneShift(palette.accents[2], 0, -2, 6)],
     [toneShift(palette.accents[1], 0, 4, 8), toneShift(palette.accents[3], 0, -4, 10)],
   ];
-  if (mobileRender) {
-    ctx.save();
-    ctx.translate(width * 0.5, height * 0.5);
-    fillStripePattern(
-      ctx,
-      width,
-      height,
-      params.backgroundSpacing,
-      params.bandAngle + Math.PI * 0.5,
-      params.backgroundSpacing * 0.18,
-      cssTone(backgroundLine, 0.08),
-      cssTone(darkBase, 0.98),
-      time * params.backgroundDrift,
-      6
-    );
-    ctx.restore();
-  } else {
-    drawStripeField(
-      ctx,
-      width,
-      height,
-      params.backgroundSpacing,
-      params.bandAngle + Math.PI * 0.5,
-      params.backgroundSpacing * 0.2,
-      cssTone(backgroundLine, 0.08),
-      cssTone(darkBase, 0.98),
-      time * params.backgroundDrift
-    );
-  }
+  drawStripeField(
+    ctx,
+    width,
+    height,
+    params.backgroundSpacing,
+    params.bandAngle + Math.PI * 0.5,
+    params.backgroundSpacing * 0.2,
+    cssTone(backgroundLine, 0.08),
+    cssTone(darkBase, 0.98),
+    time * params.backgroundDrift
+  );
 
   const span = Math.hypot(width, height);
   const axisX = Math.cos(params.bandAngle);
@@ -3541,14 +3391,13 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
     const stripePhase = time * params.stripeDrift * (0.58 + illusion.motionStrength * 0.24);
     const primaryStripeDrift = direction * stripePhase;
     const secondaryStripeDrift = -direction * stripePhase * 0.82;
-    const ghostCount = compactRender ? 0 : params.ghosts;
 
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(angle);
     ctx.scale(depthScale, depthScale);
 
-    for (let ghost = ghostCount; ghost >= 1; ghost -= 1) {
+    for (let ghost = params.ghosts; ghost >= 1; ghost -= 1) {
       const ghostOffset = ghost * span * 0.05 * direction;
       pathRoundedRect(ctx, -slabW * 0.5 + ghostOffset, -slabH * 0.5, slabW, slabH, corner);
       ctx.strokeStyle = cssTone(rimTone, 0.06);
@@ -3559,54 +3408,28 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
     pathRoundedRect(ctx, -slabW * 0.5, -slabH * 0.5, slabW, slabH, corner);
     ctx.save();
     ctx.clip();
-    if (mobileRender) {
-      fillStripePattern(
-        ctx,
-        slabW,
-        slabH,
-        params.stripeSpacing,
-        params.stripeAngle + direction * 0.025,
-        params.stripeWidth,
-        cssTone(primaryStripe, 0.92),
-        cssTone(slabFill, 0.46),
-        primaryStripeDrift
-      );
-      fillStripePattern(
-        ctx,
-        slabW,
-        slabH,
-        params.stripeSpacing * 1.08,
-        params.stripeAngle - direction * 0.035,
-        params.stripeWidth * 0.72,
-        cssTone(secondaryStripe, 0.38),
-        null,
-        secondaryStripeDrift,
-        8
-      );
-    } else {
-      drawStripePlane(
-        ctx,
-        slabW,
-        slabH,
-        params.stripeSpacing,
-        params.stripeAngle + direction * 0.025,
-        params.stripeWidth,
-        cssTone(primaryStripe, 0.92),
-        cssTone(slabFill, 0.46),
-        primaryStripeDrift
-      );
-      drawStripePlane(
-        ctx,
-        slabW,
-        slabH,
-        params.stripeSpacing * 1.08,
-        params.stripeAngle - direction * 0.035,
-        params.stripeWidth * 0.72,
-        cssTone(secondaryStripe, 0.38),
-        null,
-        secondaryStripeDrift
-      );
-    }
+    drawStripePlane(
+      ctx,
+      slabW,
+      slabH,
+      params.stripeSpacing,
+      params.stripeAngle + direction * 0.025,
+      params.stripeWidth,
+      cssTone(primaryStripe, 0.92),
+      cssTone(slabFill, 0.46),
+      primaryStripeDrift
+    );
+    drawStripePlane(
+      ctx,
+      slabW,
+      slabH,
+      params.stripeSpacing * 1.08,
+      params.stripeAngle - direction * 0.035,
+      params.stripeWidth * 0.72,
+      cssTone(secondaryStripe, 0.38),
+      null,
+      secondaryStripeDrift
+    );
     ctx.restore();
 
     pathRoundedRect(ctx, -slabW * 0.5, -slabH * 0.5, slabW, slabH, corner);
@@ -4366,7 +4189,7 @@ function bindEvents() {
 function runAnimation(now) {
   const currentIllusion = getCurrentIllusion();
 
-  if (now - state.frameGate >= FRAME_INTERVAL_MS) {
+  if (now - state.frameGate >= 30) {
     state.frameGate = now;
     renderActiveScene(canvas, now, false);
     if (state.appMode === APP_MODE_COMPOSER && composerPreviewCanvas && !composerPanelEl.hidden) {
