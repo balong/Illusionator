@@ -9,8 +9,42 @@ const QUALITY_PROBE_BUDGET = 20;
 const MIN_QUALITY_PASSES = 7;
 const COMPOSITION_WIDTH = 1100;
 const COMPOSITION_HEIGHT = 700;
-const MAX_RENDER_DPR = 2;
-const EXPORT_SCALE = 2;
+const MOBILE_COMPOSITION_SCALE = 1.18;
+const MOBILE_VIEWPORT_MAX = 900;
+const EXPORT_LOOP_MIN_SECONDS = 5;
+const EXPORT_LOOP_MAX_SECONDS = 120;
+const EXPORT_LOOP_TARGET_RELATIVE_ERROR = 0.0005;
+const EXPORT_LOOP_START_FRACTION = 0.12;
+const EXPORT_MEDIA_RECORDER_FORMATS = [
+  { mimeType: "video/mp4;codecs=avc1.42E01E", extension: "mp4" },
+  { mimeType: "video/mp4;codecs=h264", extension: "mp4" },
+  { mimeType: "video/mp4", extension: "mp4" },
+  { mimeType: "video/webm;codecs=vp9", extension: "webm" },
+  { mimeType: "video/webm;codecs=vp8", extension: "webm" },
+  { mimeType: "video/webm", extension: "webm" },
+];
+const EXPORT_ASPECT_PRESETS = {
+  "16:9": { width: 16, height: 9, label: "16:9 Landscape" },
+  "9:16": { width: 9, height: 16, label: "9:16 Portrait" },
+};
+const EXPORT_RESOLUTION_PRESETS = {
+  1080: { label: "1080p", shortEdge: 1080 },
+  1440: { label: "1440p", shortEdge: 1440 },
+  2160: { label: "2160p", shortEdge: 2160 },
+};
+const EXPORT_FPS_PRESETS = {
+  24: { label: "24 fps" },
+  30: { label: "30 fps" },
+  60: { label: "60 fps" },
+  90: { label: "90 fps" },
+  120: { label: "120 fps" },
+};
+const DEFAULT_EXPORT_ASPECT = "16:9";
+const DEFAULT_EXPORT_RESOLUTION = "2160";
+const DEFAULT_EXPORT_FPS = "60";
+const APP_MODE_GENERATOR = "generator";
+const APP_MODE_COMPOSER = "composer";
+const DEFAULT_COMPOSER_MENU_WIDTH = 980;
 
 const viewerEl = document.getElementById("viewer");
 const canvas = document.getElementById("illusionCanvas");
@@ -21,11 +55,11 @@ const menuToggleBtn = document.getElementById("menuToggleBtn");
 const menuCloseBtn = document.getElementById("menuCloseBtn");
 const menuBackdrop = document.getElementById("menuBackdrop");
 const sideMenuEl = document.getElementById("sideMenu");
+const composerResizeHandleEl = document.getElementById("composerResizeHandle");
 
 const prevBtn = document.getElementById("prevBtn");
 const nextBtn = document.getElementById("nextBtn");
-const likeBtn = document.getElementById("likeBtn");
-const favoriteBtn = document.getElementById("favoriteBtn");
+const saveBtn = document.getElementById("saveBtn");
 
 const complexityRange = document.getElementById("complexityRange");
 const motionRange = document.getElementById("motionRange");
@@ -34,13 +68,23 @@ const noveltyRange = document.getElementById("noveltyRange");
 const complexityValue = document.getElementById("complexityValue");
 const motionValue = document.getElementById("motionValue");
 const noveltyValue = document.getElementById("noveltyValue");
+const exportAspectSelect = document.getElementById("exportAspectSelect");
+const exportResolutionSelect = document.getElementById("exportResolutionSelect");
+const exportFpsSelect = document.getElementById("exportFpsSelect");
+const exportResolutionHint = document.getElementById("exportResolutionHint");
+const exportProgressWrap = document.getElementById("exportProgressWrap");
+const exportProgressFill = document.getElementById("exportProgressFill");
+const exportProgressText = document.getElementById("exportProgressText");
 
 const currentSeedEl = document.getElementById("currentSeed");
 const currentNoveltyEl = document.getElementById("currentNovelty");
 const currentPositionEl = document.getElementById("currentPosition");
 
+const discoveryCountLabelEl = document.getElementById("discoveryCountLabel");
+const savedCountLabelEl = document.getElementById("savedCountLabel");
+const autoplayStateLabelEl = document.getElementById("autoplayStateLabel");
 const discoveryCountEl = document.getElementById("discoveryCount");
-const favoriteCountEl = document.getElementById("favoriteCount");
+const savedCountEl = document.getElementById("savedCount");
 const autoplayStateEl = document.getElementById("autoplayState");
 
 const newBtn = document.getElementById("newBtn");
@@ -48,6 +92,25 @@ const evolveBtn = document.getElementById("evolveBtn");
 const batchBtn = document.getElementById("batchBtn");
 const autoplayBtn = document.getElementById("autoplayBtn");
 const exportBtn = document.getElementById("exportBtn");
+const exportLoopBtn = document.getElementById("exportLoopBtn");
+const shareBtn = document.getElementById("shareBtn");
+const generatorModeBtn = document.getElementById("generatorModeBtn");
+const composerModeBtn = document.getElementById("composerModeBtn");
+const modePanelEls = Array.from(document.querySelectorAll("[data-mode-panel]"));
+
+const composerPanelEl = document.getElementById("composerPanel");
+const customNameInput = document.getElementById("customNameInput");
+const customBackgroundInput = document.getElementById("customBackgroundInput");
+const customSchemeSelect = document.getElementById("customSchemeSelect");
+const customNewBtn = document.getElementById("customNewBtn");
+const customSaveBtn = document.getElementById("customSaveBtn");
+const customShareBtn = document.getElementById("customShareBtn");
+const customStatusEl = document.getElementById("customStatus");
+const elementPickerEl = document.getElementById("elementPicker");
+const savedCustomListEl = document.getElementById("savedCustomList");
+const layerListEl = document.getElementById("layerList");
+const layerSummaryEl = document.getElementById("layerSummary");
+const composerPreviewCanvas = document.getElementById("composerPreviewCanvas");
 
 const state = {
   options: {
@@ -70,18 +133,55 @@ const state = {
   archiveVectors: [],
   frameGate: 0,
   seedCounter: 0,
+  appMode: APP_MODE_GENERATOR,
+  composerMenuWidth: DEFAULT_COMPOSER_MENU_WIDTH,
+  customSeedCounter: 0,
+  currentCustomId: null,
+  customCompositions: [],
+  customDraft: null,
   menuOpen: false,
+  menuResizeSession: null,
   touchStart: null,
-  renderProfile: {
-    live: false,
-    compact: false,
+  exportingLoop: false,
+  exportOptions: {
+    aspect: DEFAULT_EXPORT_ASPECT,
+    resolution: DEFAULT_EXPORT_RESOLUTION,
+    fps: DEFAULT_EXPORT_FPS,
   },
 };
 
 const qualityProbeCanvas = document.createElement("canvas");
 qualityProbeCanvas.width = QUALITY_PROBE_WIDTH;
 qualityProbeCanvas.height = QUALITY_PROBE_HEIGHT;
-const stripeTileCache = new Map();
+
+const customColorSchemes = [
+  {
+    id: "neon-noir",
+    name: "Neon Noir",
+    colors: ["#6df7ff", "#ff7ad9", "#ffd166", "#7cff8c"],
+    ink: "#f4f0e8",
+  },
+  {
+    id: "acid-sun",
+    name: "Acid Sun",
+    colors: ["#ff7b54", "#ffd23f", "#6cffb8", "#2bd9fe"],
+    ink: "#f9f3e6",
+  },
+  {
+    id: "opal-night",
+    name: "Opal Night",
+    colors: ["#b4f5ff", "#93a7ff", "#d7a6ff", "#ffb6d9"],
+    ink: "#f7f7fb",
+  },
+  {
+    id: "ember-signal",
+    name: "Ember Signal",
+    colors: ["#ff8a5b", "#ffcf6e", "#f14a7d", "#8af0d6"],
+    ink: "#fff2e2",
+  },
+];
+
+let customElementTypes = [];
 
 const researchPrinciples = [
   {
@@ -99,6 +199,75 @@ const researchPrinciples = [
       drift: rng.float(0.5, 1.8),
     }),
     draw: drawMoireField,
+  },
+  {
+    id: "parallax_tile_drift",
+    name: "Parallax Tile Drift",
+    mechanism:
+      "Oversized translucent slabs slide across moving line fields so depth layers appear to shear past each other.",
+    fullScreenMotion: true,
+    sample: (rng, options) => ({
+      cols: rng.int(4, 8),
+      rows: rng.int(4, 7),
+      fieldSpacing: rng.float(12, 30 - options.complexity * 0.5),
+      fieldWidth: rng.float(3.5, 10 + options.complexity * 0.35),
+      fieldAngle: rng.float(-0.9, 0.9),
+      crossAngle: rng.float(0.18, 0.7) * rng.sign(),
+      fieldDrift: rng.float(0.16, 0.62 + options.motion * 0.08),
+      tileDrift: rng.float(0.12, 0.52 + options.motion * 0.06),
+      tileScale: rng.float(0.68, 1.08),
+      tilt: rng.float(0.04, 0.2),
+      corner: rng.float(0.04, 0.18),
+    }),
+    draw: drawParallaxTileDrift,
+  },
+  {
+    id: "barber_pole_shear",
+    name: "Barber Pole Shear",
+    mechanism:
+      "Stripe motion inside giant angled apertures conflicts with the outer slab direction, producing sliding and extrusion.",
+    fullScreenMotion: true,
+    alphaRange: [0.74, 0.9],
+    preferredBlends: ["source-over", "screen"],
+    sample: (rng, options) => ({
+      bands: rng.next() < 0.72 ? 3 : 2,
+      bandAngle: rng.float(-0.92, 0.92),
+      stripeAngle: rng.float(-0.08, 0.08),
+      stripeSpacing: rng.float(8.5, 12.5),
+      stripeWidth: rng.float(2.4, 4.2),
+      stripeDrift: rng.float(0.14, 0.24 + options.motion * 0.02),
+      backgroundSpacing: rng.float(28, 38),
+      backgroundDrift: rng.float(0.025, 0.07 + options.motion * 0.012),
+      slabHeight: rng.float(0.4, 0.52),
+      slabLength: rng.float(2.7, 3.3),
+      slabTravel: rng.float(0.06, 0.12 + options.motion * 0.012),
+      slabBob: rng.float(0.018, 0.038),
+      slabSway: rng.float(0.02, 0.05),
+      depthPulse: rng.float(0.025, 0.055),
+      laneOverlap: rng.float(0.58, 0.68),
+      corner: rng.float(0.08, 0.18),
+      ghosts: 1,
+    }),
+    draw: drawBarberPoleShear,
+  },
+  {
+    id: "caustic_wave_mesh",
+    name: "Caustic Wave Mesh",
+    mechanism:
+      "Several low-frequency line lattices drift out of phase, turning the whole frame into a breathing field of curvature.",
+    fullScreenMotion: true,
+    sample: (rng, options) => ({
+      spacing: rng.float(10, 22 - options.complexity * 0.35),
+      amplitude: rng.float(18, 54 + options.complexity * 4.5),
+      freq: rng.float(0.22, 0.68),
+      stroke: rng.float(0.55, 1.7),
+      angleA: rng.float(-0.85, 0.85),
+      angleB: rng.float(-0.85, 0.85),
+      angleC: rng.float(-0.85, 0.85),
+      drift: rng.float(0.16, 0.48 + options.motion * 0.05),
+      veilBands: rng.int(2, 6),
+    }),
+    draw: drawCausticWaveMesh,
   },
   {
     id: "cafe_wall",
@@ -257,21 +426,6 @@ const researchPrinciples = [
     draw: drawTroxlerField,
   },
   {
-    id: "hering_warp",
-    name: "Hering Radial Warp",
-    mechanism:
-      "Radial context lines bias orientation coding, making straight lines appear bowed or warped.",
-    sample: (rng, options) => ({
-      rays: rng.int(28, 88 + options.complexity * 3),
-      rayBend: rng.float(0.06, 0.26),
-      raySpread: rng.float(0.95, 1.5),
-      offsetY: rng.float(-0.22, 0.22),
-      lineGap: rng.float(0.12, 0.3),
-      drift: rng.float(0.04, 0.38 + options.motion * 0.03),
-    }),
-    draw: drawHeringWarp,
-  },
-  {
     id: "muller_lyer_field",
     name: "Muller-Lyer Field",
     mechanism:
@@ -332,25 +486,27 @@ const researchPrinciples = [
     }),
     draw: drawWhiteLightness,
   },
-  {
-    id: "delboeuf_rings",
-    name: "Delboeuf Rings",
-    mechanism:
-      "Relative ring surrounds alter perceived size of identical inner circles through contextual scaling.",
-    sample: (rng, options) => ({
-      pairs: rng.int(2, 6 + Math.floor(options.complexity / 3)),
-      innerRadius: rng.float(10, 30 + options.complexity * 1.6),
-      outerScaleA: rng.float(1.25, 1.75),
-      outerScaleB: rng.float(2.1, 3.3),
-      spacing: rng.float(0.18, 0.36),
-      wobble: rng.float(0.04, 0.26 + options.motion * 0.03),
-    }),
-    draw: drawDelboeufRings,
-  },
 ];
 
 const researchById = Object.fromEntries(researchPrinciples.map((item) => [item.id, item]));
 const allPrincipleIds = researchPrinciples.map((item) => item.id);
+const immersiveMotionPrincipleIds = researchPrinciples
+  .filter((item) => item.fullScreenMotion)
+  .map((item) => item.id);
+customElementTypes = researchPrinciples.map((profile) => ({
+  id: profile.id,
+  name: profile.name,
+  description: profile.mechanism,
+  defaultSpeed: profile.fullScreenMotion ? 1 : profile.fixationTarget ? 0.45 : 0.7,
+  buildParams(rng, options) {
+    return cloneJson(profile.sample(rng, options));
+  },
+  draw(ctx, width, height, layer, scheme, time) {
+    drawCustomResearchElement(profile, ctx, width, height, layer, scheme, time);
+  },
+}));
+const customSchemeById = Object.fromEntries(customColorSchemes.map((item) => [item.id, item]));
+const customElementById = Object.fromEntries(customElementTypes.map((item) => [item.id, item]));
 const blendModes = [
   "source-over",
   "screen",
@@ -361,14 +517,292 @@ const blendModes = [
   "overlay",
   "exclusion",
 ];
+let activeRenderMotion = null;
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+function getComposerMenuWidthBounds() {
+  const maxWidth = Math.max(360, Math.floor(window.innerWidth * 0.96));
+  const minWidth = Math.min(420, maxWidth);
+  return { minWidth, maxWidth };
+}
+
+function clampComposerMenuWidth(width) {
+  const { minWidth, maxWidth } = getComposerMenuWidthBounds();
+  return clamp(width, minWidth, maxWidth);
+}
+
 function wrapHue(h) {
   const mod = h % 360;
   return mod < 0 ? mod + 360 : mod;
+}
+
+function getActiveRenderMotion() {
+  return activeRenderMotion || {
+    rawTime: 0,
+    exportLoop: false,
+    progress: 0,
+    duration: EXPORT_LOOP_MIN_SECONDS,
+    scale: 1,
+    timeScale: 1,
+  };
+}
+
+function collectLoopFrequency(kind, baseFrequency) {
+  const motion = getActiveRenderMotion();
+  const collector = motion.collector;
+  if (!collector || !baseFrequency) {
+    return;
+  }
+
+  if (!Number.isFinite(baseFrequency) || baseFrequency <= 0.000001) {
+    return;
+  }
+
+  const key = `${kind}:${baseFrequency.toFixed(4)}`;
+  if (!collector.has(key)) {
+    collector.set(key, baseFrequency);
+  }
+}
+
+function getMotionAngle(rate, minCycles = 1) {
+  const motion = getActiveRenderMotion();
+  const effectiveRate = rate * (motion.scale ?? 1);
+  const timeScale = motion.timeScale ?? 1;
+  const wallClockRate = effectiveRate * timeScale;
+  if (!effectiveRate) {
+    return 0;
+  }
+  const angularFrequency = Math.abs(wallClockRate) / TAU;
+  collectLoopFrequency("angle", angularFrequency);
+  if (!motion.exportLoop) {
+    return motion.rawTime * effectiveRate;
+  }
+
+  const targetCycles = angularFrequency * motion.duration;
+  const cycles = Math.max(minCycles, Math.round(targetCycles) || 1);
+  return motion.progress * TAU * cycles * Math.sign(effectiveRate || 1);
+}
+
+function getMotionShift(rate, liveDistance, loopPeriod = liveDistance, minCycles = 1) {
+  const motion = getActiveRenderMotion();
+  const effectiveRate = rate * (motion.scale ?? 1);
+  const timeScale = motion.timeScale ?? 1;
+  if (!effectiveRate) {
+    return 0;
+  }
+  const travelPerSecond = Math.abs(effectiveRate * timeScale * liveDistance);
+  const loopFrequency = travelPerSecond / Math.max(0.000001, Math.abs(loopPeriod));
+  collectLoopFrequency("shift", loopFrequency);
+  if (!motion.exportLoop) {
+    return motion.rawTime * effectiveRate * liveDistance;
+  }
+
+  const targetCycles = loopFrequency * motion.duration;
+  const cycles = Math.max(minCycles, Math.round(targetCycles) || 1);
+  return motion.progress * loopPeriod * cycles * Math.sign(effectiveRate || 1);
+}
+
+function scoreLoopDuration(duration, frequencies) {
+  let maxRelativeError = 0;
+  let totalRelativeError = 0;
+
+  for (const frequency of frequencies) {
+    if (frequency * duration < 1 - 0.000001) {
+      return {
+        maxRelativeError: Number.POSITIVE_INFINITY,
+        averageRelativeError: Number.POSITIVE_INFINITY,
+      };
+    }
+
+    const cycles = Math.max(1, Math.round(frequency * duration));
+    const quantizedFrequency = cycles / duration;
+    const relativeError = Math.abs(quantizedFrequency - frequency) / frequency;
+    maxRelativeError = Math.max(maxRelativeError, relativeError);
+    totalRelativeError += relativeError;
+  }
+
+  return {
+    maxRelativeError,
+    averageRelativeError: frequencies.length ? totalRelativeError / frequencies.length : 0,
+  };
+}
+
+function getMinimumLoopDuration(frequencies) {
+  let minimumDuration = EXPORT_LOOP_MIN_SECONDS;
+
+  for (const frequency of frequencies) {
+    if (!Number.isFinite(frequency) || frequency <= 0.000001) {
+      continue;
+    }
+    minimumDuration = Math.max(minimumDuration, 1 / frequency);
+  }
+
+  return minimumDuration;
+}
+
+function pickLoopDuration(frequencies, fps = getLoopExportFps()) {
+  if (!frequencies.length) {
+    return EXPORT_LOOP_MIN_SECONDS;
+  }
+
+  const frameStep = 1 / Math.max(1, fps);
+  const minimumDuration = getMinimumLoopDuration(frequencies);
+  const searchStart = Math.min(
+    EXPORT_LOOP_MAX_SECONDS,
+    Math.ceil(minimumDuration / frameStep) * frameStep
+  );
+  let bestDuration = Number(searchStart.toFixed(3));
+  let bestScore = { maxRelativeError: Number.POSITIVE_INFINITY, averageRelativeError: Number.POSITIVE_INFINITY };
+
+  for (
+    let duration = searchStart;
+    duration <= EXPORT_LOOP_MAX_SECONDS + frameStep * 0.5;
+    duration += frameStep
+  ) {
+    const score = scoreLoopDuration(duration, frequencies);
+
+    if (
+      score.maxRelativeError < bestScore.maxRelativeError - 0.000001 ||
+      (Math.abs(score.maxRelativeError - bestScore.maxRelativeError) <= 0.000001 &&
+        score.averageRelativeError < bestScore.averageRelativeError - 0.000001) ||
+      (Math.abs(score.maxRelativeError - bestScore.maxRelativeError) <= 0.000001 &&
+        Math.abs(score.averageRelativeError - bestScore.averageRelativeError) <= 0.000001 &&
+        duration < bestDuration)
+    ) {
+      bestDuration = Number(duration.toFixed(3));
+      bestScore = score;
+    }
+  }
+
+  if (minimumDuration > EXPORT_LOOP_MAX_SECONDS) {
+    console.warn("Loop export hit maximum duration before all live motion cycles could complete.", {
+      minimumDuration,
+      maxDuration: EXPORT_LOOP_MAX_SECONDS,
+    });
+  }
+
+  if (bestScore.maxRelativeError > EXPORT_LOOP_TARGET_RELATIVE_ERROR) {
+    console.warn("Loop export exceeded target speed tolerance.", {
+      bestDuration,
+      ...bestScore,
+    });
+  }
+
+  return bestDuration;
+}
+
+function collectSceneLoopFrequencies() {
+  const probeCanvas = document.createElement("canvas");
+  probeCanvas.width = 64;
+  probeCanvas.height = 64;
+  const collector = new Map();
+  const previousRenderMotion = activeRenderMotion;
+
+  activeRenderMotion = {
+    rawTime: 0,
+    exportLoop: false,
+    progress: 0,
+    duration: EXPORT_LOOP_MIN_SECONDS,
+    scale: 1,
+    timeScale: getActiveSceneRenderTimeScale(false),
+    collector,
+  };
+
+  try {
+    renderActiveScene(probeCanvas, 0, false);
+  } finally {
+    activeRenderMotion = previousRenderMotion;
+  }
+
+  return Array.from(collector.values());
+}
+
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function hexToRgb(hex) {
+  const normalized = typeof hex === "string" ? hex.trim() : "";
+  if (!/^#?[0-9a-f]{6}$/i.test(normalized)) {
+    return { r: 255, g: 255, b: 255 };
+  }
+
+  const compact = normalized.startsWith("#") ? normalized.slice(1) : normalized;
+  return {
+    r: Number.parseInt(compact.slice(0, 2), 16),
+    g: Number.parseInt(compact.slice(2, 4), 16),
+    b: Number.parseInt(compact.slice(4, 6), 16),
+  };
+}
+
+function rgbToHsl(r, g, b) {
+  const nr = r / 255;
+  const ng = g / 255;
+  const nb = b / 255;
+  const max = Math.max(nr, ng, nb);
+  const min = Math.min(nr, ng, nb);
+  const lightness = (max + min) / 2;
+  const delta = max - min;
+
+  if (!delta) {
+    return { h: 0, s: 0, l: lightness * 100 };
+  }
+
+  const saturation =
+    lightness > 0.5 ? delta / (2 - max - min) : delta / (max + min);
+
+  let hue = 0;
+  if (max === nr) {
+    hue = (ng - nb) / delta + (ng < nb ? 6 : 0);
+  } else if (max === ng) {
+    hue = (nb - nr) / delta + 2;
+  } else {
+    hue = (nr - ng) / delta + 4;
+  }
+
+  return {
+    h: (hue / 6) * 360,
+    s: saturation * 100,
+    l: lightness * 100,
+  };
+}
+
+function hexToTone(hex) {
+  const { r, g, b } = hexToRgb(hex);
+  const hsl = rgbToHsl(r, g, b);
+  return makeTone(hsl.h, hsl.s, hsl.l);
+}
+
+function rgba(hex, alpha = 1) {
+  const { r, g, b } = hexToRgb(hex);
+  return `rgba(${r}, ${g}, ${b}, ${clamp(alpha, 0, 1)})`;
+}
+
+function isHexColor(value) {
+  return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value.trim());
+}
+
+function encodeBase64Url(input) {
+  const bytes = new TextEncoder().encode(input);
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function decodeBase64Url(input) {
+  const padded = input.replace(/-/g, "+").replace(/_/g, "/");
+  const normalized = padded + "=".repeat((4 - (padded.length % 4 || 4)) % 4);
+  const binary = atob(normalized);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new TextDecoder().decode(bytes);
 }
 
 function pick(list, rng) {
@@ -404,6 +838,26 @@ function normalizeEnabledPrinciples(ids) {
     new Set(ids.filter((principleId) => typeof principleId === "string" && researchById[principleId]))
   );
   return normalized.length ? normalized : [...allPrincipleIds];
+}
+
+function mergeImmersiveMotionPrinciples(ids) {
+  const normalized = normalizeEnabledPrinciples(ids);
+  if (!Array.isArray(ids)) {
+    return normalized;
+  }
+
+  const broadPoolThreshold = Math.max(10, allPrincipleIds.length - immersiveMotionPrincipleIds.length - 2);
+  if (normalized.length < broadPoolThreshold) {
+    return normalized;
+  }
+
+  const expanded = [...normalized];
+  for (const principleId of immersiveMotionPrincipleIds) {
+    if (!expanded.includes(principleId)) {
+      expanded.push(principleId);
+    }
+  }
+  return expanded;
 }
 
 function getEnabledPrinciples() {
@@ -566,6 +1020,384 @@ function mutateSeed(seed, index) {
   return `${seed}-${index.toString(36)}-${Math.floor(Math.random() * 1e8).toString(36)}`;
 }
 
+function getCustomScheme(schemeId) {
+  return customSchemeById[schemeId] || customColorSchemes[0];
+}
+
+function getEffectiveLayerScheme(layer, baseScheme) {
+  const scheme =
+    layer.overrideScheme && layer.schemeId ? getCustomScheme(layer.schemeId) : baseScheme;
+
+  if (!layer.useCustomColors) {
+    return scheme;
+  }
+
+  return {
+    id: "custom",
+    name: "Custom Colors",
+    colors: Array.isArray(layer.customColors) && layer.customColors.length === 4
+      ? layer.customColors.map((color, index) => (isHexColor(color) ? color : scheme.colors[index]))
+      : [...scheme.colors],
+    ink: isHexColor(layer.customInk) ? layer.customInk : scheme.ink,
+  };
+}
+
+function createCustomPalette(backgroundColor, schemeId) {
+  const scheme = getCustomScheme(schemeId);
+  return {
+    baseHue: hexToTone(scheme.colors[0]).h,
+    bgA: hexToTone(backgroundColor),
+    bgB: hexToTone(scheme.colors[1]),
+    ink: hexToTone(scheme.ink),
+    accents: scheme.colors.map((color) => hexToTone(color)),
+  };
+}
+
+function getCustomSchemeOptionsMarkup(selectedId, includeGlobal = false) {
+  const options = [];
+  if (includeGlobal) {
+    options.push(`<option value="" ${selectedId ? "" : "selected"}>Use Global Scheme</option>`);
+  }
+  for (const scheme of customColorSchemes) {
+    options.push(
+      `<option value="${scheme.id}" ${scheme.id === selectedId ? "selected" : ""}>${scheme.name}</option>`
+    );
+  }
+  return options.join("");
+}
+
+function makeCustomLayer(typeId = customElementTypes[0].id) {
+  const element = customElementById[typeId] || customElementTypes[0];
+  const rng = new SeedRng(`custom-${element.id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
+  const currentScheme = getCustomScheme(getCurrentCustomComposition()?.schemeId || customColorSchemes[0].id);
+  return {
+    id: `layer-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    typeId: element.id,
+    x: 0,
+    y: 0,
+    scale: 1,
+    rotation: 0,
+    speed: element.defaultSpeed,
+    opacity: 0.86,
+    overrideScheme: false,
+    schemeId: "",
+    useCustomColors: false,
+    customColors: [...currentScheme.colors],
+    customInk: currentScheme.ink,
+    params: element.buildParams ? element.buildParams(rng, { complexity: 6, motion: 4 }) : {},
+  };
+}
+
+function makeEmptyCustomComposition(name = "") {
+  const scheme = customColorSchemes[0];
+  state.customSeedCounter += 1;
+  return {
+    id: null,
+    name: name || `Untitled ${state.customSeedCounter}`,
+    backgroundColor: "#080c14",
+    schemeId: scheme.id,
+    layers: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+}
+
+function sanitizeCustomLayer(layer) {
+  if (!layer || !customElementById[layer.typeId]) {
+    return null;
+  }
+
+  const element = customElementById[layer.typeId];
+  const x = Number(layer.x);
+  const y = Number(layer.y);
+  const scale = Number(layer.scale);
+  const rotation = Number(layer.rotation);
+  const speed = Number(layer.speed);
+  const opacity = Number(layer.opacity);
+  const fallbackScheme = getCustomScheme(layer.schemeId);
+  const customColors = Array.isArray(layer.customColors)
+    ? layer.customColors.slice(0, 4).map((color, index) => (isHexColor(color) ? color : fallbackScheme.colors[index] || customColorSchemes[0].colors[index]))
+    : [...fallbackScheme.colors];
+
+  return {
+    id:
+      typeof layer.id === "string" && layer.id
+        ? layer.id
+        : `layer-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    typeId: layer.typeId,
+    x: clamp(Number.isFinite(x) ? x : 0, -60, 60),
+    y: clamp(Number.isFinite(y) ? y : 0, -60, 60),
+    scale: clamp(Number.isFinite(scale) ? scale : 1, 0.2, 3),
+    rotation: clamp(Number.isFinite(rotation) ? rotation : 0, -180, 180),
+    speed: clamp(Number.isFinite(speed) ? speed : 0, -3, 3),
+    opacity: clamp(Number.isFinite(opacity) ? opacity : 0.86, 0, 1),
+    overrideScheme: Boolean(layer.overrideScheme),
+    schemeId:
+      typeof layer.schemeId === "string" && customSchemeById[layer.schemeId] ? layer.schemeId : "",
+    useCustomColors: Boolean(layer.useCustomColors),
+    customColors:
+      customColors.length === 4
+        ? customColors
+        : [...customColors, ...customColorSchemes[0].colors].slice(0, 4),
+    customInk: isHexColor(layer.customInk) ? layer.customInk : fallbackScheme.ink,
+    params: layer.params && typeof layer.params === "object" ? cloneJson(layer.params) : element.buildParams?.(new SeedRng(`restore-${layer.id}`), { complexity: 6, motion: 4 }) || {},
+  };
+}
+
+function sanitizeCustomComposition(item) {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+
+  const layers = Array.isArray(item.layers) ? item.layers.map(sanitizeCustomLayer).filter(Boolean) : [];
+  return {
+    id: typeof item.id === "string" && item.id ? item.id : null,
+    name:
+      typeof item.name === "string" && item.name.trim()
+        ? item.name.trim().slice(0, 48)
+        : `Untitled ${Math.max(1, state.customSeedCounter + 1)}`,
+    backgroundColor:
+      typeof item.backgroundColor === "string" && /^#[0-9a-f]{6}$/i.test(item.backgroundColor)
+        ? item.backgroundColor
+        : "#080c14",
+    schemeId: customSchemeById[item.schemeId] ? item.schemeId : customColorSchemes[0].id,
+    layers,
+    createdAt: Number(item.createdAt) || Date.now(),
+    updatedAt: Number(item.updatedAt) || Date.now(),
+  };
+}
+
+function getCurrentCustomComposition() {
+  return state.customDraft;
+}
+
+function setCustomStatus(message) {
+  if (customStatusEl) {
+    customStatusEl.textContent = message;
+  }
+}
+
+function syncCustomControls() {
+  const current =
+    getCurrentCustomComposition() || {
+      name: "",
+      backgroundColor: "#080c14",
+      schemeId: customColorSchemes[0].id,
+      layers: [],
+    };
+  customNameInput.value = current.name;
+  customBackgroundInput.value = current.backgroundColor;
+  customSchemeSelect.innerHTML = getCustomSchemeOptionsMarkup(current.schemeId);
+  customSchemeSelect.value = current.schemeId;
+  layerSummaryEl.textContent = `${current.layers.length} layer${current.layers.length === 1 ? "" : "s"}`;
+}
+
+function createNewCustomDraft() {
+  state.currentCustomId = null;
+  state.customDraft = makeEmptyCustomComposition();
+  syncCustomControls();
+  renderSavedCustomList();
+  renderLayerList();
+  updateInterface();
+  persistState();
+  setCustomStatus("New blank composition ready.");
+}
+
+function loadCustomComposition(customId) {
+  const found = state.customCompositions.find((item) => item.id === customId);
+  if (!found) {
+    return;
+  }
+  state.currentCustomId = found.id;
+  state.customDraft = cloneJson(found);
+  syncCustomControls();
+  renderSavedCustomList();
+  renderLayerList();
+  updateInterface();
+  persistState();
+  setCustomStatus(`Editing ${found.name}.`);
+}
+
+function saveCurrentCustomComposition() {
+  const current = getCurrentCustomComposition();
+  if (!current) {
+    return;
+  }
+
+  current.name = (customNameInput.value || current.name || "").trim().slice(0, 48) || "Untitled composition";
+  current.updatedAt = Date.now();
+
+  if (!state.currentCustomId) {
+    current.id = `custom-${current.updatedAt.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    current.createdAt = current.updatedAt;
+    state.currentCustomId = current.id;
+    state.customCompositions.unshift(cloneJson(current));
+  } else {
+    const index = state.customCompositions.findIndex((item) => item.id === state.currentCustomId);
+    if (index === -1) {
+      state.customCompositions.unshift(cloneJson(current));
+    } else {
+      state.customCompositions[index] = cloneJson(current);
+    }
+  }
+
+  state.customDraft = cloneJson(current);
+  renderSavedCustomList();
+  syncCustomControls();
+  updateInterface();
+  persistState();
+  setCustomStatus(`Saved ${current.name}.`);
+}
+
+function updateCurrentCustom(mutator, options = {}) {
+  const current = getCurrentCustomComposition();
+  if (!current) {
+    state.customDraft = makeEmptyCustomComposition();
+  }
+
+  mutator(state.customDraft);
+  state.customDraft.updatedAt = Date.now();
+  if (options.syncControls !== false) {
+    syncCustomControls();
+  }
+  if (options.renderLayers !== false) {
+    renderLayerList();
+  }
+  if (options.renderSaved !== false) {
+    renderSavedCustomList();
+  }
+  updateInterface();
+  persistState();
+}
+
+function serializeSharePayload(payload) {
+  return encodeBase64Url(JSON.stringify(payload));
+}
+
+function parseSharePayload(token) {
+  return JSON.parse(decodeBase64Url(token));
+}
+
+function buildShareUrl(payload) {
+  const url = new URL(window.location.href);
+  url.hash = `share=${serializeSharePayload(payload)}`;
+  return url.toString();
+}
+
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const input = document.createElement("textarea");
+  input.value = text;
+  input.setAttribute("readonly", "");
+  input.style.position = "absolute";
+  input.style.left = "-9999px";
+  document.body.append(input);
+  input.select();
+  document.execCommand("copy");
+  input.remove();
+}
+
+function getCurrentSharePayload() {
+  if (state.appMode === APP_MODE_COMPOSER) {
+    const current = getCurrentCustomComposition();
+    if (!current) {
+      return null;
+    }
+    const shared = cloneJson(current);
+    shared.id = null;
+    return {
+      version: 1,
+      mode: APP_MODE_COMPOSER,
+      item: shared,
+    };
+  }
+
+  const current = getCurrentIllusion();
+  if (!current) {
+    return null;
+  }
+  return {
+    version: 1,
+    mode: APP_MODE_GENERATOR,
+    item: cloneJson(current),
+  };
+}
+
+async function sharePayload(payload, sourceButton = null, message = "Share link copied.") {
+  if (!payload) {
+    return;
+  }
+
+  const originalLabel = sourceButton?.textContent || "";
+  try {
+    await copyTextToClipboard(buildShareUrl(payload));
+    if (sourceButton) {
+      sourceButton.textContent = "Link Copied";
+      window.setTimeout(() => {
+        sourceButton.textContent = originalLabel;
+      }, 1400);
+    }
+    if (state.appMode === APP_MODE_COMPOSER) {
+      setCustomStatus(message);
+    }
+  } catch (error) {
+    console.warn("Share link copy failed:", error);
+    if (sourceButton) {
+      sourceButton.textContent = "Copy Failed";
+      window.setTimeout(() => {
+        sourceButton.textContent = originalLabel;
+      }, 1400);
+    }
+    if (state.appMode === APP_MODE_COMPOSER) {
+      setCustomStatus("Share link copy failed.");
+    }
+  }
+}
+
+function hydrateFromShareLink() {
+  const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
+  const params = new URLSearchParams(hash);
+  const token = params.get("share");
+  if (!token) {
+    return;
+  }
+
+  try {
+    const payload = parseSharePayload(token);
+    if (payload?.mode === APP_MODE_COMPOSER) {
+      const shared = sanitizeCustomComposition(payload.item);
+      if (!shared) {
+        return;
+      }
+      shared.id = null;
+      state.currentCustomId = null;
+      state.customDraft = shared;
+      state.appMode = APP_MODE_COMPOSER;
+      return;
+    }
+
+    if (payload?.mode === APP_MODE_GENERATOR) {
+      const shared = sanitizeStoredDiscovery(payload.item);
+      if (!shared) {
+        return;
+      }
+      state.discoveries = [shared, ...state.discoveries.filter((item) => item.id !== shared.id)].slice(0, MAX_DISCOVERIES);
+      state.archiveVectors = state.discoveries.map((item) => ({
+        id: item.id,
+        vector: item.feature,
+      }));
+      state.currentId = shared.id;
+      state.appMode = APP_MODE_GENERATOR;
+    }
+  } catch (error) {
+    console.warn("Share link load failed:", error);
+  }
+}
+
 function makePalette(rng) {
   const baseHue = rng.float(0, 360);
   const warmShift = rng.float(70, 160) * rng.sign();
@@ -595,6 +1427,7 @@ function choosePrinciple(rng, alreadyPicked = [], allowedIds = null) {
   const ids =
     Array.isArray(allowedIds) && allowedIds.length ? allowedIds : getEnabledPrinciples();
   const weights = ids.map((id) => {
+    const profile = researchById[id];
     const base = 1;
     const linearPref = getLinearPreference(id);
     let pairPref = 0;
@@ -603,7 +1436,10 @@ function choosePrinciple(rng, alreadyPicked = [], allowedIds = null) {
       pairPref = sum / alreadyPicked.length;
     }
     const repeatPenalty = alreadyPicked.includes(id) ? 0.72 : 1;
-    return clamp((base + linearPref * 0.22 + pairPref * 0.2) * repeatPenalty, 0.2, 3.9);
+    const motionBoost = profile?.fullScreenMotion
+      ? 1 + state.options.motion * 0.08 + state.options.complexity * 0.04
+      : 1;
+    return clamp((base + linearPref * 0.22 + pairPref * 0.2) * repeatPenalty * motionBoost, 0.2, 4.8);
   });
   return weightedChoice(ids, weights, rng);
 }
@@ -625,12 +1461,17 @@ function chooseExistingPrinciple(rng, alreadyPicked = []) {
 function sampleLayer(principleId, rng, options) {
   const profile = researchById[principleId];
   const params = profile.sample(rng, options);
+  const alphaRange = Array.isArray(profile.alphaRange) ? profile.alphaRange : [0.34, 0.92];
+  const allowedBlends =
+    Array.isArray(profile.preferredBlends) && profile.preferredBlends.length
+      ? profile.preferredBlends
+      : blendModes;
 
   return {
     principleId,
     params,
-    alpha: clamp(rng.float(0.34, 0.92), 0.25, 1),
-    blend: pick(blendModes, rng),
+    alpha: clamp(rng.float(alphaRange[0], alphaRange[1]), 0.25, 1),
+    blend: pick(allowedBlends, rng),
     rotation: rng.float(-0.3, 0.3),
     scale: rng.float(0.8, 1.16),
     offsetX: rng.float(-0.12, 0.12),
@@ -869,9 +1710,8 @@ function computeCompositeScore(illusion) {
   const noveltyScore = illusion.novelty * 2.6;
   const predictedScore = illusion.predictedAppeal * 1.4;
   const qualityScore = (illusion.qualityScore ?? 0.55) * 1.05;
-  const favoriteBonus = illusion.favorite ? 1.4 : 0;
-  const likeBonus = illusion.liked ? 0.9 : 0;
-  return ratingScore + noveltyScore + predictedScore + qualityScore + favoriteBonus + likeBonus;
+  const saveBonus = illusion.favorite ? 1.4 : 0;
+  return ratingScore + noveltyScore + predictedScore + qualityScore + saveBonus;
 }
 
 function buildIllusion(seed, parentId = null) {
@@ -921,7 +1761,6 @@ function buildIllusion(seed, parentId = null) {
     motionStrength: state.options.motion / 10,
     qualityScore: 0.55,
     rating: 0,
-    liked: false,
     favorite: false,
     votes: 0,
   };
@@ -1153,6 +1992,9 @@ function setCurrentByIndex(index) {
 }
 
 function navigateOlder() {
+  if (state.appMode === APP_MODE_COMPOSER) {
+    return;
+  }
   const index = getCurrentIndex();
   if (index === -1) {
     return;
@@ -1163,6 +2005,9 @@ function navigateOlder() {
 }
 
 function navigateNextOrNew() {
+  if (state.appMode === APP_MODE_COMPOSER) {
+    return;
+  }
   const index = getCurrentIndex();
   if (index === -1) {
     spawnOne("fresh");
@@ -1183,8 +2028,8 @@ function renderResearchList() {
   if (researchMixMetaEl) {
     researchMixMetaEl.textContent =
       enabledPrinciples.size === 1
-        ? "1 family active. The last enabled family stays locked so generation remains possible."
-        : `${enabledPrinciples.size} families active. Narrower mixes usually produce stronger, cleaner illusions.`;
+        ? "1 type enabled. At least one type stays on so generation keeps working."
+        : `${enabledPrinciples.size} types enabled. Narrower mixes usually produce cleaner results.`;
   }
 
   for (const profile of researchPrinciples) {
@@ -1207,6 +2052,326 @@ function renderResearchList() {
     `;
     researchListEl.append(li);
   }
+}
+
+function renderElementPicker() {
+  elementPickerEl.innerHTML = "";
+
+  for (const element of customElementTypes) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "element-card";
+    button.dataset.addElement = element.id;
+    button.innerHTML = `
+      <canvas width="180" height="120" aria-hidden="true"></canvas>
+      <strong>${element.name}</strong>
+      <span>${element.description}</span>
+    `;
+    elementPickerEl.append(button);
+
+    const thumbCanvas = button.querySelector("canvas");
+    if (thumbCanvas) {
+      renderCustomElementThumbnail(element.id, thumbCanvas);
+    }
+  }
+}
+
+function renderSavedCustomList() {
+  const activeId = state.currentCustomId;
+  savedCustomListEl.innerHTML = "";
+
+  if (!state.customCompositions.length) {
+    savedCustomListEl.innerHTML = `<p class="empty-state">No saved custom compositions yet. Build one, then save it here for later edits.</p>`;
+    return;
+  }
+
+  for (const item of state.customCompositions) {
+    const wrapper = document.createElement("div");
+    wrapper.className = `saved-custom-item${item.id === activeId ? " active" : ""}`;
+    const dateLabel = new Date(item.updatedAt).toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+    });
+    wrapper.innerHTML = `
+      <div class="saved-custom-actions">
+        <button type="button" data-load-custom="${item.id}">
+          <strong>${item.name}</strong>
+          <span>${item.layers.length} layer${item.layers.length === 1 ? "" : "s"} in ${getCustomScheme(item.schemeId).name}</span>
+        </button>
+        <button type="button" data-share-custom="${item.id}">Share</button>
+      </div>
+      <div class="saved-custom-meta">
+        <span>${dateLabel}</span>
+        <span>${item.id === activeId ? "Editing" : "Saved"}</span>
+      </div>
+    `;
+    savedCustomListEl.append(wrapper);
+  }
+}
+
+function formatLayerValue(property, value) {
+  switch (property) {
+    case "x":
+    case "y":
+      return `${Math.round(value)}%`;
+    case "scale":
+      return `${Math.round(value * 100)}%`;
+    case "rotation":
+      return `${Math.round(value)}deg`;
+    case "speed":
+      return value.toFixed(1);
+    case "opacity":
+      return `${Math.round(value * 100)}%`;
+    default:
+      return String(value);
+  }
+}
+
+function renderLayerList() {
+  const current = getCurrentCustomComposition();
+  layerListEl.innerHTML = "";
+  const layers = current?.layers || [];
+  layerSummaryEl.textContent = `${layers.length} layer${layers.length === 1 ? "" : "s"}`;
+
+  if (!layers.length) {
+    layerListEl.innerHTML = `<p class="empty-state">Add a layer from the selector above. Each new element is placed on top of the existing stack.</p>`;
+    return;
+  }
+
+  const displayLayers = [...layers].reverse();
+  displayLayers.forEach((layer, displayIndex) => {
+    const actualIndex = layers.length - 1 - displayIndex;
+    const isTopLayer = actualIndex === layers.length - 1;
+    const element = customElementById[layer.typeId];
+    const article = document.createElement("article");
+    article.className = `layer-card${isTopLayer ? " top-layer" : ""}`;
+    article.dataset.layerId = layer.id;
+    article.innerHTML = `
+      <div class="layer-card-head">
+        <div class="layer-card-meta">
+          <strong>${element.name}</strong>
+          <span>${isTopLayer ? "Top Layer" : `Layer ${actualIndex + 1}`}</span>
+        </div>
+        <button type="button" class="layer-remove-btn" data-remove-layer="${layer.id}">Remove</button>
+      </div>
+      <div class="field-grid layer-controls">
+        ${renderLayerRangeField(layer, "x", "Position X", -50, 50, 1)}
+        ${renderLayerRangeField(layer, "y", "Position Y", -50, 50, 1)}
+        ${renderLayerRangeField(layer, "scale", "Scale", 0.2, 3, 0.05)}
+        ${renderLayerRangeField(layer, "rotation", "Rotation", -180, 180, 1)}
+        ${renderLayerRangeField(layer, "speed", "Speed", -3, 3, 0.1)}
+        ${renderLayerRangeField(layer, "opacity", "Opacity", 0, 1, 0.01)}
+        <label class="field-stack">
+          <span>Override Scheme</span>
+          <span class="toggle-row">
+            <input type="checkbox" data-layer-id="${layer.id}" data-layer-property="overrideScheme" ${layer.overrideScheme ? "checked" : ""} />
+            Use a different palette for this layer
+          </span>
+        </label>
+        <label class="field-stack">
+          <span>Layer Scheme</span>
+          <select class="select-input" data-layer-id="${layer.id}" data-layer-property="schemeId" ${layer.overrideScheme && !layer.useCustomColors ? "" : "disabled"}>
+            ${getCustomSchemeOptionsMarkup(layer.schemeId, true)}
+          </select>
+        </label>
+        <label class="field-stack">
+          <span>Specific Colors</span>
+          <span class="toggle-row">
+            <input type="checkbox" data-layer-id="${layer.id}" data-layer-property="useCustomColors" ${layer.useCustomColors ? "checked" : ""} />
+            Pick exact colors for this layer
+          </span>
+        </label>
+      </div>
+      ${layer.useCustomColors ? renderLayerColorFields(layer) : ""}
+    `;
+    layerListEl.append(article);
+  });
+}
+
+function renderLayerRangeField(layer, property, label, min, max, step) {
+  return `
+    <label class="field-stack range-field">
+      <span class="field-label-row">
+        <span>${label}</span>
+        <output>${formatLayerValue(property, layer[property])}</output>
+      </span>
+      <input
+        type="range"
+        min="${min}"
+        max="${max}"
+        step="${step}"
+        value="${layer[property]}"
+        data-layer-id="${layer.id}"
+        data-layer-property="${property}"
+      />
+    </label>
+  `;
+}
+
+function renderLayerColorFields(layer) {
+  const labels = ["Accent 1", "Accent 2", "Accent 3", "Accent 4"];
+  const fields = layer.customColors
+    .map(
+      (color, index) => `
+        <label class="field-stack color-field">
+          <span>${labels[index]}</span>
+          <input
+            class="color-input"
+            type="color"
+            value="${color}"
+            data-layer-id="${layer.id}"
+            data-layer-property="customColor"
+            data-layer-color-index="${index}"
+          />
+        </label>
+      `
+    )
+    .join("");
+
+  return `
+    <div class="field-grid layer-color-grid">
+      ${fields}
+      <label class="field-stack color-field">
+        <span>Ink</span>
+        <input
+          class="color-input"
+          type="color"
+          value="${layer.customInk}"
+          data-layer-id="${layer.id}"
+          data-layer-property="customInk"
+        />
+      </label>
+    </div>
+  `;
+}
+
+function applyMenuWidth() {
+  const narrowViewport = window.innerWidth <= 860;
+  const inComposer = state.appMode === APP_MODE_COMPOSER;
+
+  if (inComposer && !narrowViewport) {
+    sideMenuEl.style.width = `${clampComposerMenuWidth(state.composerMenuWidth)}px`;
+    composerResizeHandleEl.hidden = false;
+  } else {
+    sideMenuEl.style.width = "";
+    composerResizeHandleEl.hidden = true;
+  }
+}
+
+function setAppMode(mode) {
+  state.appMode = mode === APP_MODE_COMPOSER ? APP_MODE_COMPOSER : APP_MODE_GENERATOR;
+  const inComposer = state.appMode === APP_MODE_COMPOSER;
+
+  generatorModeBtn.classList.toggle("active", !inComposer);
+  generatorModeBtn.setAttribute("aria-pressed", String(!inComposer));
+  composerModeBtn.classList.toggle("active", inComposer);
+  composerModeBtn.setAttribute("aria-pressed", String(inComposer));
+
+  for (const panel of modePanelEls) {
+    const visible = panel.dataset.modePanel === state.appMode;
+    panel.hidden = !visible;
+    panel.classList.toggle("hidden-panel", !visible);
+  }
+
+  applyMenuWidth();
+
+  if (inComposer) {
+    resizeComposerPreviewCanvas();
+  }
+
+  if (state.menuOpen) {
+    if (inComposer) {
+      menuBackdrop.classList.remove("open");
+      menuBackdrop.hidden = true;
+    } else {
+      menuBackdrop.hidden = false;
+      requestAnimationFrame(() => {
+        if (state.menuOpen && state.appMode === APP_MODE_GENERATOR) {
+          menuBackdrop.classList.add("open");
+        }
+      });
+    }
+  }
+
+  updateInterface();
+  persistState();
+}
+
+function handleLayerEditorInput(event) {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) {
+    return;
+  }
+
+  const layerId = target.dataset.layerId;
+  const property = target.dataset.layerProperty;
+  if (!layerId || !property) {
+    return;
+  }
+
+  const shouldRerender =
+    target instanceof HTMLSelectElement ||
+    (target instanceof HTMLInputElement && target.type === "checkbox") ||
+    event.type === "change";
+
+  updateCurrentCustom((current) => {
+    const layer = current.layers.find((item) => item.id === layerId);
+    if (!layer) {
+      return;
+    }
+
+    if (target instanceof HTMLInputElement && target.type === "checkbox") {
+      layer[property] = target.checked;
+      if (!target.checked && property === "overrideScheme") {
+        layer.schemeId = "";
+      }
+      if (property === "useCustomColors" && target.checked) {
+        const currentScheme = getEffectiveLayerScheme(
+          { ...layer, useCustomColors: false },
+          getCustomScheme(getCurrentCustomComposition()?.schemeId || customColorSchemes[0].id)
+        );
+        layer.customColors = [...currentScheme.colors];
+        layer.customInk = currentScheme.ink;
+      }
+      return;
+    }
+
+    if (property === "schemeId") {
+      layer.schemeId = target.value;
+      return;
+    }
+
+    if (property === "customColor") {
+      const colorIndex = Number(target.dataset.layerColorIndex);
+      if (Number.isInteger(colorIndex) && colorIndex >= 0 && colorIndex < layer.customColors.length) {
+        layer.customColors[colorIndex] = target.value;
+      }
+      return;
+    }
+
+    if (property === "customInk") {
+      layer.customInk = target.value;
+      return;
+    }
+
+    const numeric = Number(target.value);
+    layer[property] = Number.isFinite(numeric) ? numeric : layer[property];
+  }, {
+    syncControls: false,
+    renderLayers: shouldRerender,
+    renderSaved: false,
+  });
+
+  if (!shouldRerender && target instanceof HTMLInputElement) {
+    const output = target.closest(".field-stack")?.querySelector("output");
+    const current = getCurrentCustomComposition();
+    const layer = current?.layers.find((item) => item.id === layerId);
+    if (output && layer) {
+      output.textContent = formatLayerValue(property, layer[property]);
+    }
+  }
+
+  setCustomStatus("Layer updated.");
 }
 
 function setPrincipleEnabled(principleId, enabled) {
@@ -1241,8 +2406,8 @@ function sanitizeStoredDiscovery(item) {
     layers,
     principles,
     rating: Number(item.rating) || 0,
-    liked: Boolean(item.liked),
-    favorite: Boolean(item.favorite),
+    liked: false,
+    favorite: Boolean(item.favorite || item.liked),
     novelty: clamp(Number(item.novelty) || 0, 0, 1),
     noveltyNearest: clamp(Number(item.noveltyNearest) || 0, 0, 1),
     noveltyKnn: clamp(Number(item.noveltyKnn) || 0, 0, 1),
@@ -1268,23 +2433,49 @@ function sanitizeStoredDiscovery(item) {
 }
 
 function updateSessionStats() {
-  discoveryCountEl.textContent = String(state.discoveries.length);
-  favoriteCountEl.textContent = String(state.discoveries.filter((item) => item.favorite).length);
-  autoplayStateEl.textContent = state.autoplay ? "On" : "Off";
+  if (state.appMode === APP_MODE_COMPOSER) {
+    discoveryCountLabelEl.textContent = "Custom";
+    savedCountLabelEl.textContent = "Layers";
+    autoplayStateLabelEl.textContent = "Mode";
+    discoveryCountEl.textContent = String(state.customCompositions.length);
+    savedCountEl.textContent = String((state.customDraft?.layers || []).length);
+    autoplayStateEl.textContent = "Live";
+  } else {
+    discoveryCountLabelEl.textContent = "Designs";
+    savedCountLabelEl.textContent = "Saved";
+    autoplayStateLabelEl.textContent = "Autoplay";
+    discoveryCountEl.textContent = String(state.discoveries.length);
+    savedCountEl.textContent = String(state.discoveries.filter((item) => item.favorite).length);
+    autoplayStateEl.textContent = state.autoplay ? "On" : "Off";
+  }
   autoplayBtn.textContent = state.autoplay ? "Stop Autoplay" : "Start Autoplay";
 }
 
 function updateActionButtons(current) {
-  const isLiked = Boolean(current?.liked);
-  const isFavorite = Boolean(current?.favorite);
+  if (state.appMode === APP_MODE_COMPOSER) {
+    saveBtn.classList.remove("active");
+    saveBtn.disabled = true;
+    saveBtn.title = "Use Save Composition in Composer mode";
+    return;
+  }
 
-  likeBtn.classList.toggle("active", isLiked);
-  favoriteBtn.classList.toggle("active", isFavorite);
-  likeBtn.innerHTML = isLiked ? "&#9829;" : "&#9825;";
-  favoriteBtn.innerHTML = isFavorite ? "&#9733;" : "&#9734;";
+  const isSaved = Boolean(current?.favorite);
+  saveBtn.disabled = false;
+  saveBtn.title = "Save design";
+  saveBtn.classList.toggle("active", isSaved);
+  saveBtn.innerHTML = "&#9829;";
 }
 
 function updateMetaBar() {
+  if (state.appMode === APP_MODE_COMPOSER) {
+    const current = getCurrentCustomComposition();
+    currentPositionEl.textContent = "Composer";
+    currentSeedEl.textContent = current ? current.name : "Untitled composition";
+    currentNoveltyEl.textContent = current ? `${current.layers.length} layer${current.layers.length === 1 ? "" : "s"}` : "0 layers";
+    updateActionButtons(null);
+    return;
+  }
+
   const current = getCurrentIllusion();
   const index = getCurrentIndex();
 
@@ -1303,6 +2494,13 @@ function updateMetaBar() {
 }
 
 function updateNavButtons() {
+  if (state.appMode === APP_MODE_COMPOSER) {
+    prevBtn.disabled = true;
+    nextBtn.disabled = true;
+    nextBtn.title = "Composer mode";
+    return;
+  }
+
   const index = getCurrentIndex();
   prevBtn.disabled = index === -1 || index >= state.discoveries.length - 1;
   nextBtn.disabled = index === -1;
@@ -1321,10 +2519,61 @@ function syncControlReadouts() {
   noveltyValue.textContent = `${Math.round(state.options.noveltyBias * 100)}%`;
 }
 
+function normalizeExportAspect(value) {
+  return EXPORT_ASPECT_PRESETS[value] ? value : DEFAULT_EXPORT_ASPECT;
+}
+
+function normalizeExportResolution(value) {
+  const key = String(value || "");
+  return EXPORT_RESOLUTION_PRESETS[key] ? key : DEFAULT_EXPORT_RESOLUTION;
+}
+
+function normalizeExportFps(value) {
+  const key = String(value || "");
+  return EXPORT_FPS_PRESETS[key] ? key : DEFAULT_EXPORT_FPS;
+}
+
+function getLoopExportFps() {
+  return Number.parseInt(normalizeExportFps(state.exportOptions.fps), 10);
+}
+
+function getLoopExportDimensions(
+  aspect = state.exportOptions.aspect,
+  resolution = state.exportOptions.resolution
+) {
+  const aspectPreset = EXPORT_ASPECT_PRESETS[normalizeExportAspect(aspect)];
+  const resolutionPreset = EXPORT_RESOLUTION_PRESETS[normalizeExportResolution(resolution)];
+  const scale = resolutionPreset.shortEdge / Math.min(aspectPreset.width, aspectPreset.height);
+
+  return {
+    width: roundToEven(aspectPreset.width * scale),
+    height: roundToEven(aspectPreset.height * scale),
+  };
+}
+
+function syncLoopExportControls() {
+  if (exportAspectSelect) {
+    exportAspectSelect.value = normalizeExportAspect(state.exportOptions.aspect);
+  }
+  if (exportResolutionSelect) {
+    exportResolutionSelect.value = normalizeExportResolution(state.exportOptions.resolution);
+  }
+  if (exportFpsSelect) {
+    exportFpsSelect.value = normalizeExportFps(state.exportOptions.fps);
+  }
+  if (exportResolutionHint) {
+    const { width, height } = getLoopExportDimensions();
+    const fps = getLoopExportFps();
+    exportResolutionHint.textContent = `Exports at ${width.toLocaleString()} x ${height.toLocaleString()} at ${fps} fps.`;
+  }
+}
+
 function persistState() {
   ensurePreferenceModelShape();
   const payload = {
     options: state.options,
+    appMode: state.appMode,
+    composerMenuWidth: state.composerMenuWidth,
     preference: { ...state.preferenceModel.linear },
     preferenceModel: {
       bias: state.preferenceModel.bias,
@@ -1345,7 +2594,6 @@ function persistState() {
       qualityScore: item.qualityScore,
       qualityMetrics: item.qualityMetrics,
       rating: item.rating,
-      liked: item.liked,
       favorite: item.favorite,
       votes: item.votes,
       feature: item.feature,
@@ -1360,6 +2608,15 @@ function persistState() {
     })),
     currentId: state.currentId,
     seedCounter: state.seedCounter,
+    customSeedCounter: state.customSeedCounter,
+    currentCustomId: state.currentCustomId,
+    customCompositions: state.customCompositions.map((item) => cloneJson(item)),
+    customDraft: state.customDraft ? cloneJson(state.customDraft) : null,
+    exportOptions: {
+      aspect: normalizeExportAspect(state.exportOptions.aspect),
+      resolution: normalizeExportResolution(state.exportOptions.resolution),
+      fps: normalizeExportFps(state.exportOptions.fps),
+    },
   };
 
   try {
@@ -1373,6 +2630,7 @@ function persistState() {
 function restoreState() {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) {
+    state.customDraft = makeEmptyCustomComposition();
     return;
   }
 
@@ -1383,9 +2641,15 @@ function restoreState() {
       state.options.complexity = clamp(Number(parsed.options.complexity) || 6, 1, 10);
       state.options.motion = clamp(Number(parsed.options.motion) || 4, 0, 10);
       state.options.noveltyBias = clamp(Number(parsed.options.noveltyBias) || 0.75, 0, 1);
-      state.options.enabledPrinciples = normalizeEnabledPrinciples(parsed.options.enabledPrinciples);
+      state.options.enabledPrinciples = mergeImmersiveMotionPrinciples(parsed.options.enabledPrinciples);
     } else {
       state.options.enabledPrinciples = normalizeEnabledPrinciples(state.options.enabledPrinciples);
+    }
+
+    if (parsed.exportOptions) {
+      state.exportOptions.aspect = normalizeExportAspect(parsed.exportOptions.aspect);
+      state.exportOptions.resolution = normalizeExportResolution(parsed.exportOptions.resolution);
+      state.exportOptions.fps = normalizeExportFps(parsed.exportOptions.fps);
     }
 
     if (parsed.preferenceModel && typeof parsed.preferenceModel === "object") {
@@ -1407,9 +2671,18 @@ function restoreState() {
     ensurePreferenceModelShape();
     state.preference = { ...state.preferenceModel.linear };
     state.seedCounter = Number(parsed.seedCounter) || 0;
+    state.customSeedCounter = Number(parsed.customSeedCounter) || 0;
+    state.appMode = parsed.appMode === APP_MODE_COMPOSER ? APP_MODE_COMPOSER : APP_MODE_GENERATOR;
+    state.composerMenuWidth = clampComposerMenuWidth(
+      Number(parsed.composerMenuWidth) || DEFAULT_COMPOSER_MENU_WIDTH
+    );
 
     if (Array.isArray(parsed.discoveries)) {
       state.discoveries = parsed.discoveries.map(sanitizeStoredDiscovery).filter(Boolean).slice(0, MAX_DISCOVERIES);
+    }
+
+    if (Array.isArray(parsed.customCompositions)) {
+      state.customCompositions = parsed.customCompositions.map(sanitizeCustomComposition).filter(Boolean);
     }
 
     state.archiveVectors = state.discoveries.map((item) => ({
@@ -1423,33 +2696,33 @@ function restoreState() {
           ? parsed.currentId
           : state.discoveries[0].id;
     }
+
+    if (parsed.customDraft) {
+      state.customDraft = sanitizeCustomComposition(parsed.customDraft);
+    }
+    if (!state.customDraft) {
+      state.customDraft = makeEmptyCustomComposition();
+    }
+    state.currentCustomId =
+      typeof parsed.currentCustomId === "string" &&
+      state.customCompositions.some((item) => item.id === parsed.currentCustomId)
+        ? parsed.currentCustomId
+        : null;
   } catch (error) {
     console.warn("State restore failed:", error);
+    state.customDraft = makeEmptyCustomComposition();
   }
 }
 
-function toggleLike() {
+function toggleSave() {
+  if (state.appMode === APP_MODE_COMPOSER) {
+    return;
+  }
   const current = getCurrentIllusion();
   if (!current) {
     return;
   }
 
-  const delta = current.liked ? -1 : 1;
-  current.liked = !current.liked;
-  current.rating = clamp(current.rating + delta, -9, 30);
-  current.votes += 1;
-  applyPreferenceFeedback(current.principles, delta);
-
-  current.compositeScore = computeCompositeScore(current);
-  updateInterface();
-  persistState();
-}
-
-function toggleFavorite() {
-  const current = getCurrentIllusion();
-  if (!current) {
-    return;
-  }
   current.favorite = !current.favorite;
   applyPreferenceFeedback(current.principles, current.favorite ? 0.7 : -0.45);
   current.compositeScore = computeCompositeScore(current);
@@ -1458,16 +2731,27 @@ function toggleFavorite() {
 }
 
 function resizeCanvas() {
-  const rect = canvas.getBoundingClientRect();
-  const dpr = Math.min(window.devicePixelRatio || 1, MAX_RENDER_DPR);
+  resizeCanvasToDisplaySize(canvas, 320, 220);
+}
 
-  const targetWidth = Math.max(320, Math.round(rect.width * dpr));
-  const targetHeight = Math.max(220, Math.round(rect.height * dpr));
+function resizeCanvasToDisplaySize(targetCanvas, minWidth = 240, minHeight = 180) {
+  const rect = targetCanvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
 
-  if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
-    canvas.width = targetWidth;
-    canvas.height = targetHeight;
+  const targetWidth = Math.max(minWidth, Math.round(rect.width * dpr));
+  const targetHeight = Math.max(minHeight, Math.round(rect.height * dpr));
+
+  if (targetCanvas.width !== targetWidth || targetCanvas.height !== targetHeight) {
+    targetCanvas.width = targetWidth;
+    targetCanvas.height = targetHeight;
   }
+}
+
+function resizeComposerPreviewCanvas() {
+  if (!composerPreviewCanvas || composerPanelEl?.hidden) {
+    return;
+  }
+  resizeCanvasToDisplaySize(composerPreviewCanvas, 260, 320);
 }
 
 function drawBackground(ctx, width, height, palette) {
@@ -1507,9 +2791,28 @@ function drawVignette(ctx, width, height, palette) {
   ctx.fillRect(0, 0, width, height);
 }
 
+function getViewportCompositionScale(targetCanvas, width, height) {
+  const dpr = window.devicePixelRatio || 1;
+
+  if (targetCanvas !== canvas) {
+    if (targetCanvas?.dataset?.matchViewportComposition !== "true") {
+      return 1;
+    }
+
+    const cssWidth = (canvas.width || width) / dpr;
+    const cssHeight = (canvas.height || height) / dpr;
+    return Math.min(cssWidth, cssHeight) <= MOBILE_VIEWPORT_MAX ? MOBILE_COMPOSITION_SCALE : 1;
+  }
+
+  const cssWidth = width / dpr;
+  const cssHeight = height / dpr;
+  return Math.min(cssWidth, cssHeight) <= MOBILE_VIEWPORT_MAX ? MOBILE_COMPOSITION_SCALE : 1;
+}
+
 function getCompositionFrame(targetCanvas, width, height) {
-  const compositionWidth = COMPOSITION_WIDTH;
-  const compositionHeight = COMPOSITION_HEIGHT;
+  const compositionScale = getViewportCompositionScale(targetCanvas, width, height);
+  const compositionWidth = COMPOSITION_WIDTH * compositionScale;
+  const compositionHeight = COMPOSITION_HEIGHT * compositionScale;
   const scale = Math.max(width / compositionWidth, height / compositionHeight);
   return {
     width: compositionWidth,
@@ -1520,6 +2823,39 @@ function getCompositionFrame(targetCanvas, width, height) {
   };
 }
 
+function getIllusionRenderTimeScale(illusion, staticFrame = false) {
+  if (staticFrame || !illusion) {
+    return 0;
+  }
+  return 0.32 + illusion.motionStrength * 0.95;
+}
+
+function getIllusionRenderTimeSeconds(illusion, now = 0, staticFrame = false) {
+  return (now / 1000) * getIllusionRenderTimeScale(illusion, staticFrame);
+}
+
+function getCustomCompositionRenderTimeScale(staticFrame = false) {
+  return staticFrame ? 0 : 1;
+}
+
+function getCustomCompositionRenderTimeSeconds(now = 0, staticFrame = false) {
+  return (now / 1000) * getCustomCompositionRenderTimeScale(staticFrame);
+}
+
+function getActiveSceneRenderTimeScale(staticFrame = false) {
+  if (state.appMode === APP_MODE_COMPOSER) {
+    return getCustomCompositionRenderTimeScale(staticFrame);
+  }
+  return getIllusionRenderTimeScale(getCurrentIllusion(), staticFrame);
+}
+
+function getActiveSceneRenderTimeSeconds(now = 0, staticFrame = false) {
+  if (state.appMode === APP_MODE_COMPOSER) {
+    return getCustomCompositionRenderTimeSeconds(now, staticFrame);
+  }
+  return getIllusionRenderTimeSeconds(getCurrentIllusion(), now, staticFrame);
+}
+
 function renderIllusion(illusion, targetCanvas, now = 0, staticFrame = false) {
   if (!illusion) {
     return;
@@ -1527,34 +2863,36 @@ function renderIllusion(illusion, targetCanvas, now = 0, staticFrame = false) {
   const ctx = targetCanvas.getContext("2d");
   const width = targetCanvas.width;
   const height = targetCanvas.height;
-  const time = (now / 1000) * (0.32 + illusion.motionStrength * 0.95);
+  const time = getIllusionRenderTimeSeconds(illusion, now, staticFrame);
+  const timeScale = getIllusionRenderTimeScale(illusion, staticFrame);
   const frame = getCompositionFrame(targetCanvas, width, height);
   const compositionWidth = frame.width;
   const compositionHeight = frame.height;
-  const fillsViewport = targetCanvas === canvas;
-  const previousRenderProfile = state.renderProfile;
-  state.renderProfile = {
-    live: fillsViewport,
-    compact:
-      fillsViewport &&
-      Math.min(canvas.getBoundingClientRect().width || width, canvas.getBoundingClientRect().height || height) <= 900,
-  };
+  const previousRenderMotion = activeRenderMotion;
+  activeRenderMotion = previousRenderMotion
+    ? {
+        ...previousRenderMotion,
+        rawTime: previousRenderMotion.exportLoop ? previousRenderMotion.rawTime : time,
+        timeScale: previousRenderMotion.exportLoop ? previousRenderMotion.timeScale : timeScale,
+      }
+    : {
+        rawTime: staticFrame ? 0 : time,
+        exportLoop: false,
+        progress: 0,
+        duration: EXPORT_LOOP_MIN_SECONDS,
+        timeScale,
+      };
 
   try {
     ctx.clearRect(0, 0, width, height);
-    if (fillsViewport) {
-      drawBackground(ctx, width, height, illusion.palette);
-    }
     ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, width, height);
+    ctx.clip();
     ctx.translate(frame.offsetX, frame.offsetY);
     ctx.scale(frame.scale, frame.scale);
-    ctx.beginPath();
-    ctx.rect(0, 0, compositionWidth, compositionHeight);
-    ctx.clip();
 
-    if (!fillsViewport) {
-      drawBackground(ctx, compositionWidth, compositionHeight, illusion.palette);
-    }
+    drawBackground(ctx, compositionWidth, compositionHeight, illusion.palette);
 
     for (const layer of illusion.layers) {
       const profile = researchById[layer.principleId];
@@ -1583,54 +2921,352 @@ function renderIllusion(illusion, targetCanvas, now = 0, staticFrame = false) {
       ctx.restore();
     }
 
-    if (!fillsViewport) {
-      drawVignette(ctx, compositionWidth, compositionHeight, illusion.palette);
+    drawVignette(ctx, compositionWidth, compositionHeight, illusion.palette);
+    ctx.restore();
+  } finally {
+    activeRenderMotion = previousRenderMotion;
+  }
+}
+
+function renderActiveScene(targetCanvas, now = 0, staticFrame = false) {
+  if (state.appMode === APP_MODE_COMPOSER) {
+    const custom = getCurrentCustomComposition();
+    if (custom) {
+      renderCustomComposition(custom, targetCanvas, now, staticFrame);
+    } else {
+      const ctx = targetCanvas.getContext("2d");
+      ctx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
+    }
+    return;
+  }
+
+  const current = getCurrentIllusion();
+  if (current) {
+    renderIllusion(current, targetCanvas, now, staticFrame);
+  } else {
+    const ctx = targetCanvas.getContext("2d");
+    ctx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
+  }
+}
+
+function renderCustomComposition(composition, targetCanvas, now = 0, staticFrame = false) {
+  if (!composition) {
+    return;
+  }
+
+  const ctx = targetCanvas.getContext("2d");
+  const width = targetCanvas.width;
+  const height = targetCanvas.height;
+  const time = getCustomCompositionRenderTimeSeconds(now, staticFrame);
+  const timeScale = getCustomCompositionRenderTimeScale(staticFrame);
+  const frame = getCompositionFrame(targetCanvas, width, height);
+  const compositionWidth = frame.width;
+  const compositionHeight = frame.height;
+  const baseScheme = getCustomScheme(composition.schemeId);
+  const previousRenderMotion = activeRenderMotion;
+  activeRenderMotion = previousRenderMotion
+    ? {
+        ...previousRenderMotion,
+        rawTime: previousRenderMotion.exportLoop ? previousRenderMotion.rawTime : time,
+        timeScale: previousRenderMotion.exportLoop ? previousRenderMotion.timeScale : timeScale,
+      }
+    : {
+        rawTime: time,
+        exportLoop: false,
+        progress: 0,
+        duration: EXPORT_LOOP_MIN_SECONDS,
+        timeScale,
+      };
+
+  try {
+    ctx.clearRect(0, 0, width, height);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, width, height);
+    ctx.clip();
+    ctx.translate(frame.offsetX, frame.offsetY);
+    ctx.scale(frame.scale, frame.scale);
+
+    drawCustomBackground(ctx, compositionWidth, compositionHeight, composition, baseScheme);
+
+    for (const layer of composition.layers) {
+      const element = customElementById[layer.typeId];
+      if (!element) {
+        continue;
+      }
+
+      const scheme = getEffectiveLayerScheme(layer, baseScheme);
+      ctx.save();
+      ctx.globalAlpha = layer.opacity;
+      ctx.translate(
+        compositionWidth * (0.5 + layer.x / 100),
+        compositionHeight * (0.5 + layer.y / 100)
+      );
+      ctx.rotate((layer.rotation * Math.PI) / 180);
+      ctx.scale(layer.scale, layer.scale);
+      ctx.translate(-compositionWidth * 0.5, -compositionHeight * 0.5);
+      element.draw(ctx, compositionWidth, compositionHeight, layer, scheme, time);
+      ctx.restore();
     }
     ctx.restore();
-
-    if (fillsViewport) {
-      drawVignette(ctx, width, height, illusion.palette);
-    }
   } finally {
-    state.renderProfile = previousRenderProfile;
+    activeRenderMotion = previousRenderMotion;
+  }
+}
+
+function drawCustomBackground(ctx, width, height, composition, scheme) {
+  ctx.fillStyle = composition.backgroundColor;
+  ctx.fillRect(0, 0, width, height);
+
+  const wash = ctx.createLinearGradient(0, 0, width, height);
+  wash.addColorStop(0, rgba(scheme.colors[0], 0.18));
+  wash.addColorStop(0.5, rgba(scheme.colors[2], 0.08));
+  wash.addColorStop(1, rgba(scheme.colors[1], 0.16));
+  ctx.fillStyle = wash;
+  ctx.fillRect(0, 0, width, height);
+
+  const halo = ctx.createRadialGradient(
+    width * 0.52,
+    height * 0.42,
+    width * 0.06,
+    width * 0.52,
+    height * 0.42,
+    width * 0.58
+  );
+  halo.addColorStop(0, rgba(scheme.colors[3], 0.24));
+  halo.addColorStop(1, rgba(scheme.colors[0], 0));
+  ctx.fillStyle = halo;
+  ctx.fillRect(0, 0, width, height);
+}
+
+function drawCustomResearchElement(profile, ctx, width, height, layer, scheme, time) {
+  const palette = createCustomPalette("#080c14", scheme.id);
+  palette.bgA = hexToTone(scheme.colors[0]);
+  palette.bgB = hexToTone(scheme.colors[1]);
+  palette.ink = hexToTone(scheme.ink);
+  palette.accents = scheme.colors.map((color) => hexToTone(color));
+
+  const illusionLike = {
+    motionStrength: clamp(Math.abs(layer.speed) / 3, 0, 1),
+    palette,
+    layers: [layer],
+    fixationAid: null,
+  };
+
+  const previousRenderMotion = activeRenderMotion;
+  if (previousRenderMotion) {
+    activeRenderMotion = {
+      ...previousRenderMotion,
+      scale: (previousRenderMotion.scale ?? 1) * (layer.speed || 0),
+    };
+  }
+
+  try {
+    profile.draw(
+      ctx,
+      width,
+      height,
+      layer.params || {},
+      palette,
+      time,
+      illusionLike
+    );
+  } finally {
+    activeRenderMotion = previousRenderMotion;
+  }
+}
+
+function renderCustomElementThumbnail(typeId, targetCanvas) {
+  const scheme = customColorSchemes[0];
+  const composition = {
+    backgroundColor: "#070b12",
+    schemeId: scheme.id,
+    layers: [
+      {
+        ...makeCustomLayer(typeId),
+        speed: 0.6,
+      },
+    ],
+  };
+  resizeCanvasToDisplaySize(targetCanvas, 180, 120);
+  renderCustomComposition(composition, targetCanvas, 1200, true);
+}
+
+function drawCustomHaloOrb(ctx, width, height, layer, scheme, time) {
+  const cx = width * 0.5;
+  const cy = height * 0.5;
+  const pulse = 1 + Math.sin(getMotionAngle(layer.speed * 2.4)) * 0.08;
+  const radius = Math.min(width, height) * 0.17 * pulse;
+
+  const glow = ctx.createRadialGradient(cx, cy, radius * 0.08, cx, cy, radius * 1.8);
+  glow.addColorStop(0, rgba(scheme.colors[0], 0.95));
+  glow.addColorStop(0.45, rgba(scheme.colors[1], 0.4));
+  glow.addColorStop(1, rgba(scheme.colors[2], 0));
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius * 1.8, 0, TAU);
+  ctx.fill();
+
+  ctx.fillStyle = rgba(scheme.ink, 0.9);
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius * 0.36, 0, TAU);
+  ctx.fill();
+
+  for (let i = 0; i < 5; i += 1) {
+    const theta = (i / 5) * TAU + getMotionAngle(layer.speed * 0.8 * (i % 2 === 0 ? 1 : -1));
+    const orbitRadius = radius * (0.9 + i * 0.22);
+    const size = radius * (0.08 + i * 0.02);
+    const x = cx + Math.cos(theta) * orbitRadius;
+    const y = cy + Math.sin(theta) * orbitRadius * 0.72;
+    ctx.fillStyle = rgba(scheme.colors[(i + 2) % scheme.colors.length], 0.55);
+    ctx.beginPath();
+    ctx.arc(x, y, size, 0, TAU);
+    ctx.fill();
+  }
+}
+
+function drawCustomRippleRings(ctx, width, height, layer, scheme, time) {
+  const cx = width * 0.5;
+  const cy = height * 0.5;
+  const maxRadius = Math.min(width, height) * 0.34;
+  ctx.lineWidth = Math.max(1.5, Math.min(width, height) * 0.004);
+
+  for (let i = 0; i < 8; i += 1) {
+    const radius = maxRadius * (0.18 + i * 0.11);
+    const phase = getMotionAngle(layer.speed) + i * 0.4;
+    ctx.strokeStyle = rgba(scheme.colors[i % scheme.colors.length], 0.2 + i * 0.08);
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius + Math.sin(phase) * 6, phase * 0.35, phase * 0.35 + Math.PI * 1.75);
+    ctx.stroke();
+  }
+}
+
+function drawCustomMoireWave(ctx, width, height, layer, scheme, time) {
+  ctx.lineWidth = Math.max(1.1, Math.min(width, height) * 0.0022);
+
+  for (let band = 0; band < 3; band += 1) {
+    const color = scheme.colors[band % scheme.colors.length];
+    const spacing = height * (0.08 + band * 0.025);
+    const amplitude = height * (0.04 + band * 0.015);
+    const speed = getMotionAngle(layer.speed * (0.7 + band * 0.2));
+    ctx.strokeStyle = rgba(color, 0.34 + band * 0.1);
+
+    for (let y = -spacing; y <= height + spacing; y += spacing) {
+      ctx.beginPath();
+      for (let x = -40; x <= width + 40; x += 16) {
+        const yPos = y + Math.sin(x * 0.012 + speed + band * 1.2) * amplitude;
+        if (x === -40) {
+          ctx.moveTo(x, yPos);
+        } else {
+          ctx.lineTo(x, yPos);
+        }
+      }
+      ctx.stroke();
+    }
+  }
+}
+
+function drawCustomSunburst(ctx, width, height, layer, scheme, time) {
+  const cx = width * 0.5;
+  const cy = height * 0.5;
+  const rays = 18;
+  const spin = getMotionAngle(layer.speed * 0.24);
+
+  for (let i = 0; i < rays; i += 1) {
+    const angle = (i / rays) * TAU + spin;
+    const inner = Math.min(width, height) * 0.12;
+    const outer = Math.min(width, height) * (0.34 + (i % 3) * 0.06);
+    const color = scheme.colors[i % scheme.colors.length];
+
+    ctx.fillStyle = rgba(color, 0.22 + (i % 2) * 0.08);
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(angle - 0.05) * inner, cy + Math.sin(angle - 0.05) * inner);
+    ctx.lineTo(cx + Math.cos(angle) * outer, cy + Math.sin(angle) * outer);
+    ctx.lineTo(cx + Math.cos(angle + 0.05) * inner, cy + Math.sin(angle + 0.05) * inner);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  ctx.strokeStyle = rgba(scheme.ink, 0.6);
+  ctx.lineWidth = Math.max(1.2, Math.min(width, height) * 0.004);
+  ctx.beginPath();
+  ctx.arc(cx, cy, Math.min(width, height) * 0.11, 0, TAU);
+  ctx.stroke();
+}
+
+function drawCustomPrismBars(ctx, width, height, layer, scheme, time) {
+  const barCount = 6;
+  const travel = getMotionShift(layer.speed, 28, width * 0.12);
+
+  for (let i = 0; i < barCount; i += 1) {
+    const w = width * (0.18 + (i % 3) * 0.08);
+    const h = height * (0.72 - i * 0.06);
+    const x = width * 0.12 + i * width * 0.12 + Math.sin(getMotionAngle(layer.speed) + i) * 18 + travel * 0.2 * (i % 2 === 0 ? 1 : -1);
+    const y = height * 0.14 + i * 12;
+    const color = scheme.colors[i % scheme.colors.length];
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(-0.26 + i * 0.06);
+    ctx.fillStyle = rgba(color, 0.22 + i * 0.04);
+    ctx.fillRect(-w * 0.5, -h * 0.5, w, h);
+    ctx.strokeStyle = rgba(scheme.ink, 0.18);
+    ctx.strokeRect(-w * 0.5, -h * 0.5, w, h);
+    ctx.restore();
+  }
+}
+
+function drawCustomCheckerVeil(ctx, width, height, layer, scheme, time) {
+  const cols = 8;
+  const rows = 6;
+  const tileW = width / cols;
+  const tileH = height / rows;
+
+  for (let row = -1; row <= rows; row += 1) {
+    for (let col = -1; col <= cols; col += 1) {
+      const driftX = Math.sin(getMotionAngle(layer.speed) + row * 0.7) * 12;
+      const driftY = Math.cos(getMotionAngle(layer.speed * 0.9) + col * 0.5) * 10;
+      ctx.fillStyle = rgba(scheme.colors[(row + col + customColorSchemes.length * 2) % scheme.colors.length], (row + col) % 2 === 0 ? 0.24 : 0.09);
+      ctx.fillRect(col * tileW + driftX, row * tileH + driftY, tileW + 1, tileH + 1);
+    }
+  }
+
+  ctx.strokeStyle = rgba(scheme.ink, 0.1);
+  ctx.lineWidth = 1;
+  for (let col = 0; col <= cols; col += 1) {
+    ctx.beginPath();
+    ctx.moveTo(col * tileW, 0);
+    ctx.lineTo(col * tileW, height);
+    ctx.stroke();
+  }
+  for (let row = 0; row <= rows; row += 1) {
+    ctx.beginPath();
+    ctx.moveTo(0, row * tileH);
+    ctx.lineTo(width, row * tileH);
+    ctx.stroke();
   }
 }
 
 function drawWaveSet(ctx, width, height, config) {
-  const span = Math.hypot(width, height);
-  const halfSpan = span * 0.56 + Math.max(config.amplitude, config.spacing) * 2;
-  const minX = -halfSpan;
-  const maxX = halfSpan;
-  const minY = -halfSpan;
-  const maxY = halfSpan;
-  const sampleStep = clamp(14 / Math.max(0.65, config.freq) + config.stroke * 0.4, 5, 14);
-
   ctx.save();
   ctx.translate(width * 0.5, height * 0.5);
   ctx.rotate(config.angle);
+  ctx.translate(-width * 0.5, -height * 0.5);
   ctx.strokeStyle = config.color;
   ctx.lineWidth = config.stroke;
-  ctx.lineJoin = "round";
-  ctx.lineCap = "round";
 
-  for (let y = minY; y <= maxY; y += config.spacing) {
+  const stepX = 10;
+  for (let y = -height; y < height * 2; y += config.spacing) {
     ctx.beginPath();
-    let prevX = minX;
-    let wave = Math.sin(prevX * 0.01 * config.freq + config.phase) * config.amplitude;
-    let prevY = y + wave;
-    ctx.moveTo(prevX, prevY);
-
-    for (let x = minX + sampleStep; x <= maxX + sampleStep; x += sampleStep) {
-      const nextX = Math.min(x, maxX);
-      wave = Math.sin(nextX * 0.01 * config.freq + config.phase) * config.amplitude;
-      const nextY = y + wave;
-      const midX = (prevX + nextX) * 0.5;
-      const midY = (prevY + nextY) * 0.5;
-      ctx.quadraticCurveTo(prevX, prevY, midX, midY);
-      prevX = nextX;
-      prevY = nextY;
+    for (let x = -width; x <= width * 2; x += stepX) {
+      const wave = Math.sin(x * 0.01 * config.freq + config.phase) * config.amplitude;
+      const yPos = y + wave;
+      if (x === -width) {
+        ctx.moveTo(x, yPos);
+      } else {
+        ctx.lineTo(x, yPos);
+      }
     }
-    ctx.lineTo(prevX, prevY);
     ctx.stroke();
   }
 
@@ -1638,7 +3274,7 @@ function drawWaveSet(ctx, width, height, config) {
 }
 
 function drawMoireField(ctx, width, height, params, palette, time, illusion) {
-  const phase = time * params.drift * (0.75 + illusion.motionStrength);
+  const phase = getMotionAngle(params.drift * (0.75 + illusion.motionStrength));
   drawWaveSet(ctx, width, height, {
     angle: params.angleA,
     spacing: params.spacing,
@@ -1670,7 +3306,7 @@ function drawCafeWall(ctx, width, height, params, palette, time) {
   const mortar = toneShift(palette.ink, 0, -6, -16);
 
   for (let row = -1; row <= params.rows + 1; row += 1) {
-    const waveOffset = Math.sin(row * 0.6 + time * params.wave) * tileW * 0.4;
+    const waveOffset = Math.sin(row * 0.6 + getMotionAngle(params.wave)) * tileW * 0.4;
     const rowOffset = ((row % 2 === 0 ? 1 : -1) * params.offset * tileW) / 2 + waveOffset;
 
     for (let col = -2; col <= params.cols + 2; col += 1) {
@@ -1756,7 +3392,7 @@ function drawScintillatingGrid(ctx, width, height, params, palette, time, illusi
       const pulse =
         0.45 +
         0.55 *
-          Math.sin((r + c) * 0.42 + time * params.flickerSpeed * (0.6 + illusion.motionStrength));
+          Math.sin((r + c) * 0.42 + getMotionAngle(params.flickerSpeed * (0.6 + illusion.motionStrength)));
       const jitterX = Math.sin((r + c) * 0.9) * params.jitter * gapX * 0.09;
       const jitterY = Math.cos((r - c) * 0.7) * params.jitter * gapY * 0.09;
 
@@ -1788,7 +3424,7 @@ function drawPeripheralDrift(ctx, width, height, params, palette, time) {
     const radius = ring * ringStep;
     const thickness = ringStep * params.width;
     const localSegments = params.segments + ring * 2;
-    const spin = time * params.speed + ring * params.twist * 12;
+    const spin = getMotionAngle(params.speed) + ring * params.twist * 12;
 
     for (let index = 0; index < localSegments; index += 1) {
       const phase = index / localSegments;
@@ -1817,7 +3453,7 @@ function drawKanizsaWeb(ctx, width, height, params, palette, time) {
 
   const points = [];
   for (let i = 0; i < params.nodes; i += 1) {
-    const theta = (i / params.nodes) * TAU + time * params.spin;
+    const theta = (i / params.nodes) * TAU + getMotionAngle(params.spin);
     points.push({
       x: cx + Math.cos(theta) * orbitRadius,
       y: cy + Math.sin(theta) * orbitRadius,
@@ -1868,7 +3504,7 @@ function drawFraserSpiral(ctx, width, height, params, palette, time) {
     const blocks = Math.max(8, Math.floor(circumference / (params.block * 1.1)));
 
     for (let i = 0; i < blocks; i += 1) {
-      const base = (i / blocks) * TAU + ring * params.twist + time * params.speed;
+      const base = (i / blocks) * TAU + ring * params.twist + getMotionAngle(params.speed);
       const x = Math.cos(base) * radius;
       const y = Math.sin(base) * radius;
 
@@ -1909,78 +3545,7 @@ function pathRoundedRect(ctx, x, y, width, height, radius) {
   ctx.closePath();
 }
 
-function getStripeTile(spacing, stripeWidth, stripeColor, backgroundColor = null) {
-  const step = Math.max(4, spacing);
-  const lineWidth = Math.max(1.5, stripeWidth);
-  const tileWidth = Math.max(24, Math.ceil(step * 4));
-  const tileHeight = 96;
-  const key = [
-    tileWidth,
-    tileHeight,
-    step.toFixed(2),
-    lineWidth.toFixed(2),
-    stripeColor,
-    backgroundColor || "",
-  ].join("|");
-
-  if (stripeTileCache.has(key)) {
-    return stripeTileCache.get(key);
-  }
-
-  const tile = document.createElement("canvas");
-  tile.width = tileWidth;
-  tile.height = tileHeight;
-  const tileCtx = tile.getContext("2d");
-
-  if (backgroundColor) {
-    tileCtx.fillStyle = backgroundColor;
-    tileCtx.fillRect(0, 0, tileWidth, tileHeight);
-  } else {
-    tileCtx.clearRect(0, 0, tileWidth, tileHeight);
-  }
-
-  tileCtx.fillStyle = stripeColor;
-  for (let x = -lineWidth; x <= tileWidth + step; x += step) {
-    tileCtx.fillRect(x, 0, lineWidth, tileHeight);
-  }
-
-  stripeTileCache.set(key, tile);
-  return tile;
-}
-
-function fillStripePattern(ctx, width, height, spacing, angle, stripeWidth, stripeColor, backgroundColor = null, drift = 0, driftFactor = 10) {
-  const span = Math.hypot(width, height) * 1.2;
-  const step = Math.max(4, spacing);
-  const tile = getStripeTile(spacing, stripeWidth, stripeColor, backgroundColor);
-
-  ctx.save();
-  ctx.rotate(angle);
-
-  const pattern = ctx.createPattern(tile, "repeat");
-  if (pattern?.setTransform) {
-    pattern.setTransform(new DOMMatrix().translateSelf(drift * step * driftFactor, 0));
-  }
-
-  if (pattern) {
-    ctx.fillStyle = pattern;
-    ctx.fillRect(-span, -span, span * 2, span * 2);
-  } else {
-    if (backgroundColor) {
-      ctx.fillStyle = backgroundColor;
-      ctx.fillRect(-span, -span, span * 2, span * 2);
-    }
-    ctx.fillStyle = stripeColor;
-    const lineWidth = Math.max(1.5, stripeWidth);
-    const scroll = drift * step * driftFactor;
-    for (let x = -span; x <= span; x += step) {
-      ctx.fillRect(x + scroll, -span, lineWidth, span * 2);
-    }
-  }
-
-  ctx.restore();
-}
-
-function drawStripeField(ctx, width, height, spacing, angle, stripeWidth, stripeColor, bgColor, drift = 0) {
+function drawStripeField(ctx, width, height, spacing, angle, stripeWidth, stripeColor, bgColor, driftRate = 0) {
   const span = Math.hypot(width, height);
 
   ctx.save();
@@ -1994,15 +3559,17 @@ function drawStripeField(ctx, width, height, spacing, angle, stripeWidth, stripe
   ctx.fillStyle = stripeColor;
   const step = Math.max(4, spacing);
   const lineWidth = Math.max(1.5, stripeWidth);
+  const driftPhase = getMotionAngle(driftRate);
+  const scroll = getMotionShift(driftRate, step * 10, step * 4);
   for (let x = -span; x <= span * 2; x += step) {
-    const wobble = Math.sin((x / step) * 0.66 + drift) * step * 0.16;
-    ctx.fillRect(x + wobble, -span, lineWidth, span * 3);
+    const wobble = Math.sin((x / step) * 0.66 + driftPhase) * step * 0.16;
+    ctx.fillRect(x + scroll + wobble, -span, lineWidth, span * 3);
   }
 
   ctx.restore();
 }
 
-function drawStripePlane(ctx, width, height, spacing, angle, stripeWidth, stripeColor, backgroundColor = null, drift = 0) {
+function drawStripePlane(ctx, width, height, spacing, angle, stripeWidth, stripeColor, backgroundColor = null, driftRate = 0) {
   const span = Math.hypot(width, height) * 1.2;
 
   ctx.save();
@@ -2016,9 +3583,10 @@ function drawStripePlane(ctx, width, height, spacing, angle, stripeWidth, stripe
   ctx.fillStyle = stripeColor;
   const step = Math.max(4, spacing);
   const lineWidth = Math.max(1.5, stripeWidth);
-  const scroll = drift * step * 10;
+  const driftPhase = getMotionAngle(driftRate);
+  const scroll = getMotionShift(driftRate, step * 10, step * 4);
   for (let x = -span; x <= span; x += step) {
-    const wobble = Math.sin((x / step) * 0.66 + drift) * step * 0.16;
+    const wobble = Math.sin((x / step) * 0.66 + driftPhase) * step * 0.16;
     ctx.fillRect(x + scroll + wobble, -span, lineWidth, span * 2);
   }
 
@@ -2032,13 +3600,13 @@ function drawCausticWaveMesh(ctx, width, height, params, palette, time, illusion
 
   const veilAngle = params.angleA * 0.45 + params.angleB * 0.2;
   const veilSpan = Math.hypot(width, height);
-  const veilDrift = time * params.drift * veilSpan * 0.08;
+  const bandWidth = veilSpan / Math.max(3, params.veilBands + 1);
+  const veilDrift = getMotionShift(params.drift, veilSpan * 0.08, bandWidth);
   ctx.save();
   ctx.translate(width * 0.5, height * 0.5);
   ctx.rotate(veilAngle);
   ctx.translate(-width * 0.5, -height * 0.5);
   for (let i = -1; i <= params.veilBands; i += 1) {
-    const bandWidth = veilSpan / Math.max(3, params.veilBands + 1);
     const x = i * bandWidth + veilDrift;
     const gradient = ctx.createLinearGradient(x, 0, x + bandWidth, 0);
     gradient.addColorStop(0, cssTone(palette.accents[i & 3], 0));
@@ -2049,7 +3617,7 @@ function drawCausticWaveMesh(ctx, width, height, params, palette, time, illusion
   }
   ctx.restore();
 
-  const phase = time * params.drift * (0.65 + illusion.motionStrength);
+  const phase = getMotionAngle(params.drift * (0.65 + illusion.motionStrength));
   drawWaveSet(ctx, width, height, {
     angle: params.angleA,
     spacing: params.spacing,
@@ -2090,7 +3658,7 @@ function drawParallaxTileDrift(ctx, width, height, params, palette, time) {
     params.fieldWidth,
     cssTone(palette.accents[2], 0.2),
     cssTone(darkBase, 0.98),
-    time * params.fieldDrift
+    params.fieldDrift
   );
   drawStripeField(
     ctx,
@@ -2101,7 +3669,7 @@ function drawParallaxTileDrift(ctx, width, height, params, palette, time) {
     params.fieldWidth * 0.36,
     cssTone(palette.accents[0], 0.14),
     cssTone(darkBase, 0),
-    -time * params.fieldDrift * 0.7
+    -params.fieldDrift * 0.7
   );
 
   const tileW = width / params.cols;
@@ -2117,7 +3685,11 @@ function drawParallaxTileDrift(ctx, width, height, params, palette, time) {
 
   for (let depth = 0; depth < depths.length; depth += 1) {
     const profile = depths[depth];
-    const slide = time * params.tileDrift * tileW * profile.drift;
+    const slide = getMotionShift(
+      params.tileDrift * profile.drift,
+      tileW * profile.drift,
+      tileW * (profile.drift < 0 ? -1 : 1)
+    );
     const shiftX = driftUnitX * slide;
     const shiftY = driftUnitY * slide;
     for (let row = -2; row <= params.rows + 1; row += 1) {
@@ -2153,7 +3725,6 @@ function drawParallaxTileDrift(ctx, width, height, params, palette, time) {
 }
 
 function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion) {
-  const compactRender = Boolean(state.renderProfile?.compact);
   const darkBase = toneShift(palette.bgA, 0, -24, -12);
   const backgroundLine = toneShift(palette.ink, 0, -22, -6);
   const slabFillBase = toneShift(palette.bgB, 0, -24, -10);
@@ -2170,7 +3741,7 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
     params.backgroundSpacing * 0.2,
     cssTone(backgroundLine, 0.08),
     cssTone(darkBase, 0.98),
-    time * params.backgroundDrift
+    params.backgroundDrift
   );
 
   const span = Math.hypot(width, height);
@@ -2187,7 +3758,7 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
 
   for (let i = 0; i < params.bands; i += 1) {
     const direction = i % 2 === 0 ? 1 : -1;
-    const motionPhase = time * params.slabTravel * (0.42 + illusion.motionStrength * 0.18) + i * 1.05;
+    const motionPhase = getMotionAngle(params.slabTravel * (0.42 + illusion.motionStrength * 0.18)) + i * 1.05;
     const bob = Math.sin(motionPhase) * height * params.slabBob * direction;
     const sway = Math.cos(motionPhase * 0.78 + i * 0.33) * width * params.slabSway * direction;
     const depthScale = 1 + Math.cos(motionPhase * 0.92 + i * 0.4) * params.depthPulse;
@@ -2201,17 +3772,16 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
     const slabFill = toneShift(slabFillBase, primaryStripe.h - slabFillBase.h, 6, -2);
     const rimTone = toneShift(primaryStripe, 0, -18, 14);
     const frameAlpha = 0.012 + (depthScale - 1 + params.depthPulse) * 0.06;
-    const stripePhase = time * params.stripeDrift * (0.58 + illusion.motionStrength * 0.24);
-    const primaryStripeDrift = direction * stripePhase;
-    const secondaryStripeDrift = -direction * stripePhase * 0.82;
-    const ghostCount = compactRender ? 0 : params.ghosts;
+    const stripeDriftRate = params.stripeDrift * (0.58 + illusion.motionStrength * 0.24);
+    const primaryStripeDrift = direction * stripeDriftRate;
+    const secondaryStripeDrift = -direction * stripeDriftRate * 0.82;
 
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(angle);
     ctx.scale(depthScale, depthScale);
 
-    for (let ghost = ghostCount; ghost >= 1; ghost -= 1) {
+    for (let ghost = params.ghosts; ghost >= 1; ghost -= 1) {
       const ghostOffset = ghost * span * 0.05 * direction;
       pathRoundedRect(ctx, -slabW * 0.5 + ghostOffset, -slabH * 0.5, slabW, slabH, corner);
       ctx.strokeStyle = cssTone(rimTone, 0.06);
@@ -2222,7 +3792,7 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
     pathRoundedRect(ctx, -slabW * 0.5, -slabH * 0.5, slabW, slabH, corner);
     ctx.save();
     ctx.clip();
-    fillStripePattern(
+    drawStripePlane(
       ctx,
       slabW,
       slabH,
@@ -2233,7 +3803,7 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
       cssTone(slabFill, 0.46),
       primaryStripeDrift
     );
-    fillStripePattern(
+    drawStripePlane(
       ctx,
       slabW,
       slabH,
@@ -2242,8 +3812,7 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
       params.stripeWidth * 0.72,
       cssTone(secondaryStripe, 0.38),
       null,
-      secondaryStripeDrift,
-      8
+      secondaryStripeDrift
     );
     ctx.restore();
 
@@ -2256,6 +3825,7 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
     ctx.restore();
   }
 }
+
 function drawPinnaBrelstaff(ctx, width, height, params, palette, time) {
   const cx = width * 0.5;
   const cy = height * 0.5;
@@ -2275,7 +3845,7 @@ function drawPinnaBrelstaff(ctx, width, height, params, palette, time) {
   for (let ring = 1; ring <= params.rings; ring += 1) {
     const radius = ring * ringStep;
     const band = ringStep * params.thickness;
-    const spin = time * params.spin * (ring % 2 === 0 ? 1 : -1);
+    const spin = getMotionAngle(params.spin * (ring % 2 === 0 ? 1 : -1));
 
     for (let wedge = 0; wedge < params.wedges; wedge += 1) {
       const theta = (wedge / params.wedges) * TAU + spin;
@@ -2319,7 +3889,7 @@ function drawOuchiTiles(ctx, width, height, params, palette, time) {
     params.spacing * 0.52,
     cssTone(bgLight, 0.8),
     cssTone(bgDark, 0.98),
-    time * params.pulse
+    params.pulse
   );
 
   const centerW = width * params.centerScale;
@@ -2336,11 +3906,11 @@ function drawOuchiTiles(ctx, width, height, params, palette, time) {
     width,
     height,
     params.spacing,
-    params.angleB + Math.sin(time * params.pulse * 0.5) * 0.05,
+    params.angleB + Math.sin(getMotionAngle(params.pulse * 0.5)) * 0.05,
     params.spacing * 0.48,
     cssTone(centerLight, 0.86),
     cssTone(centerDark, 0.95),
-    -time * params.pulse * 1.1
+    -params.pulse * 1.1
   );
   ctx.restore();
 
@@ -2362,7 +3932,7 @@ function drawMachBands(ctx, width, height, params, palette, time) {
   for (let i = 0; i < params.bands; i += 1) {
     const t = i / Math.max(1, params.bands - 1);
     const yBase = -span + i * bandHeight;
-    const wobble = Math.sin(i * 0.75 + time * params.drift) * bandHeight * params.ripple;
+    const wobble = Math.sin(i * 0.75 + getMotionAngle(params.drift)) * bandHeight * params.ripple;
     const y = yBase + wobble;
 
     const leftTone = toneShift(palette.bgA, 0, -6 + t * 6, -10 + t * 42 * params.ramp);
@@ -2400,7 +3970,7 @@ function drawTroxlerField(ctx, width, height, params, palette, time) {
   for (let i = 0; i < params.blobs; i += 1) {
     const noiseA = Math.sin(i * 7.91) * 0.5 + 0.5;
     const noiseB = Math.cos(i * 11.17) * 0.5 + 0.5;
-    const theta = (i / params.blobs) * TAU + time * params.drift * (0.4 + noiseA);
+    const theta = (i / params.blobs) * TAU + getMotionAngle(params.drift * (0.4 + noiseA));
     const radius = ringRadius + (noiseB - 0.5) * spread;
     const x = cx + Math.cos(theta) * radius;
     const y = cy + Math.sin(theta) * radius;
@@ -2433,7 +4003,7 @@ function drawHeringWarp(ctx, width, height, params, palette, time) {
     const midY = (centerY + y2) * 0.5;
     const normal = angle + Math.PI * 0.5;
     const bend =
-      Math.sin(i * 0.67 + time * params.drift) * params.rayBend * Math.min(width, height) * 0.6;
+      Math.sin(i * 0.67 + getMotionAngle(params.drift)) * params.rayBend * Math.min(width, height) * 0.6;
 
     ctx.beginPath();
     ctx.moveTo(centerX, centerY);
@@ -2485,7 +4055,7 @@ function drawMullerLyerField(ctx, width, height, params, palette, time) {
 
   for (let row = 0; row < rows; row += 1) {
     const t = row / Math.max(1, rows - 1);
-    const y = usableTop + rowGap * row + Math.sin(row * 0.64 + time * params.drift * 2.2) * rowGap * 0.12;
+    const y = usableTop + rowGap * row + Math.sin(row * 0.64 + getMotionAngle(params.drift * 2.2)) * rowGap * 0.12;
     const dy = Math.sin(lineAngle) * half;
     const x1 = centerX - half;
     const y1 = y - dy;
@@ -2503,7 +4073,7 @@ function drawMullerLyerField(ctx, width, height, params, palette, time) {
     const axis = Math.atan2(y2 - y1, x2 - x1);
     const leftBase = outward ? axis + Math.PI : axis;
     const rightBase = outward ? axis : axis + Math.PI;
-    const localAngle = params.wingAngle + Math.sin(t * TAU + time * params.drift) * 0.05;
+    const localAngle = params.wingAngle + Math.sin(t * TAU + getMotionAngle(params.drift)) * 0.05;
     drawWings(x1, y1, leftBase, localAngle, arrowLen, tone);
     drawWings(x2, y2, rightBase, localAngle, arrowLen, tone);
   }
@@ -2522,7 +4092,7 @@ function drawPonzoCorridor(ctx, width, height, params, palette, time) {
     const spread = width * params.railSpread;
     const startX = centerX + p * spread * 2;
     const endX = centerX + p * spread * 0.15;
-    const wobble = Math.sin(i * 0.52 + time * params.drift * 2.6) * width * 0.006;
+    const wobble = Math.sin(i * 0.52 + getMotionAngle(params.drift * 2.6)) * width * 0.006;
 
     ctx.beginPath();
     ctx.moveTo(startX, bottomY);
@@ -2536,7 +4106,7 @@ function drawPonzoCorridor(ctx, width, height, params, palette, time) {
   for (let i = 0; i < params.barCount; i += 1) {
     const t = i / Math.max(1, params.barCount - 1);
     const y = bottomY - t * (bottomY - horizonY) * 0.88;
-    const wobble = Math.sin(i * 0.9 + time * params.drift) * width * 0.012;
+    const wobble = Math.sin(i * 0.9 + getMotionAngle(params.drift)) * width * 0.012;
     const half = barLength * 0.5;
     const tone = cssTone(palette.ink, 0.86);
     ctx.strokeStyle = tone;
@@ -2553,7 +4123,7 @@ function drawPoggendorffCut(ctx, width, height, params, palette, time) {
   const stripW = width * params.stripWidth;
   const stripGap = width / (stripTotal + 1);
   const tanA = Math.tan(params.angle);
-  const drift = Math.sin(time * params.drift * 3.1) * height * 0.018;
+  const drift = Math.sin(getMotionAngle(params.drift * 3.1)) * height * 0.018;
 
   for (let s = 0; s < stripTotal; s += 1) {
     const stripX = stripGap * (s + 1) - stripW * 0.5;
@@ -2613,10 +4183,10 @@ function drawWhiteLightness(ctx, width, height, params, palette, time) {
   const centerX = width * 0.5;
 
   for (let row = 0; row < params.patchRows; row += 1) {
-    const y = rowGap * (row + 1) + Math.sin(row * 0.78 + time * params.drift * 2.7) * rowGap * params.jitter;
+    const y = rowGap * (row + 1) + Math.sin(row * 0.78 + getMotionAngle(params.drift * 2.7)) * rowGap * params.jitter;
     for (let col = 0; col < params.patchCols; col += 1) {
       const centerOffset = (col - (params.patchCols - 1) * 0.5) * colGap;
-      const phaseShift = (col % 2 === 0 ? 0 : stripeWidth * 0.5) + Math.cos(time * params.drift + row) * stripeWidth * 0.08;
+      const phaseShift = (col % 2 === 0 ? 0 : stripeWidth * 0.5) + Math.cos(getMotionAngle(params.drift) + row) * stripeWidth * 0.08;
       const x = centerX + centerOffset - patchW * 0.5;
       const yShifted = y + phaseShift;
       ctx.fillStyle = patchTone;
@@ -2645,7 +4215,7 @@ function drawDelboeufRings(ctx, width, height, params, palette, time) {
     const col = g % cols;
     const cx = col * cellW + cellW * 0.5;
     const cy = row * cellH + cellH * 0.52;
-    const wobble = Math.sin(g * 0.8 + time * params.wobble * 3.2) * minDim * 0.025;
+    const wobble = Math.sin(g * 0.8 + getMotionAngle(params.wobble * 3.2)) * minDim * 0.025;
     const leftX = cx - separation;
     const rightX = cx + separation;
 
@@ -2714,6 +4284,11 @@ function setMenuOpen(open) {
   menuToggleBtn.setAttribute("aria-expanded", String(open));
 
   if (open) {
+    if (state.appMode === APP_MODE_COMPOSER) {
+      menuBackdrop.classList.remove("open");
+      menuBackdrop.hidden = true;
+      return;
+    }
     menuBackdrop.hidden = false;
     requestAnimationFrame(() => {
       menuBackdrop.classList.add("open");
@@ -2729,23 +4304,735 @@ function setMenuOpen(open) {
   }, 180);
 }
 
-function exportCurrentPng() {
+function wait(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+function nextAnimationFrame() {
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
+}
+
+function getSupportedRecorderVideoFormat() {
+  if (typeof MediaRecorder === "undefined") {
+    return null;
+  }
+
+  for (const format of EXPORT_MEDIA_RECORDER_FORMATS) {
+    if (MediaRecorder.isTypeSupported(format.mimeType)) {
+      return format;
+    }
+  }
+
+  return null;
+}
+
+function getLoopExportBitrate(width, height, fps) {
+  const scaledBitrate = Math.round(width * height * fps * 0.18);
+  return clamp(scaledBitrate, 24_000_000, 140_000_000);
+}
+
+function asciiBytes(value) {
+  return new Uint8Array(Array.from(value, (char) => char.charCodeAt(0)));
+}
+
+function uint8(value) {
+  return Uint8Array.of(value & 0xff);
+}
+
+function uint16(value) {
+  return Uint8Array.of((value >>> 8) & 0xff, value & 0xff);
+}
+
+function uint24(value) {
+  return Uint8Array.of((value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff);
+}
+
+function uint32(value) {
+  return Uint8Array.of((value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff);
+}
+
+function zeroBytes(length) {
+  return new Uint8Array(length);
+}
+
+function concatBytes(...parts) {
+  const arrays = parts
+    .filter(Boolean)
+    .map((part) => {
+      if (part instanceof Uint8Array) {
+        return part;
+      }
+      if (ArrayBuffer.isView(part)) {
+        return new Uint8Array(part.buffer.slice(part.byteOffset, part.byteOffset + part.byteLength));
+      }
+      if (part instanceof ArrayBuffer) {
+        return new Uint8Array(part);
+      }
+      return new Uint8Array(part);
+    });
+  const totalLength = arrays.reduce((sum, part) => sum + part.byteLength, 0);
+  const output = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const part of arrays) {
+    output.set(part, offset);
+    offset += part.byteLength;
+  }
+  return output;
+}
+
+function mp4Box(type, ...payloads) {
+  const size = 8 + payloads.reduce((sum, payload) => sum + payload.byteLength, 0);
+  return concatBytes(uint32(size), asciiBytes(type), ...payloads);
+}
+
+function mp4FullBox(type, version, flags, ...payloads) {
+  return mp4Box(type, uint8(version), uint24(flags), ...payloads);
+}
+
+function fixed1616(value) {
+  return uint32(Math.round(value * 65536));
+}
+
+function fixed88(value) {
+  return uint16(Math.round(value * 256));
+}
+
+function makeMatrixBytes() {
+  return concatBytes(
+    uint32(0x00010000),
+    uint32(0),
+    uint32(0),
+    uint32(0),
+    uint32(0x00010000),
+    uint32(0),
+    uint32(0),
+    uint32(0),
+    uint32(0x40000000)
+  );
+}
+
+function makeCompressorNameBytes(name) {
+  const truncated = name.slice(0, 31);
+  const bytes = zeroBytes(32);
+  bytes[0] = truncated.length;
+  bytes.set(asciiBytes(truncated), 1);
+  return bytes;
+}
+
+function makeLanguageCode(language) {
+  return (
+    ((language.charCodeAt(0) - 0x60) << 10) |
+    ((language.charCodeAt(1) - 0x60) << 5) |
+    (language.charCodeAt(2) - 0x60)
+  );
+}
+
+function findByteSequence(haystack, needle) {
+  outer: for (let index = 0; index <= haystack.byteLength - needle.byteLength; index += 1) {
+    for (let offset = 0; offset < needle.byteLength; offset += 1) {
+      if (haystack[index + offset] !== needle[offset]) {
+        continue outer;
+      }
+    }
+    return index;
+  }
+  return -1;
+}
+
+function buildMp4FromAvcSamples({ width, height, fps, samples, avcDescription }) {
+  const timescale = fps;
+  const duration = samples.length;
+  const sampleSizes = samples.map((sample) => sample.data.byteLength);
+  const totalSampleBytes = sampleSizes.reduce((sum, size) => sum + size, 0);
+  const keyframes = samples
+    .map((sample, index) => (sample.isKeyFrame ? index + 1 : 0))
+    .filter(Boolean);
+  if (totalSampleBytes > 0xffffffff - 8) {
+    throw new Error("Loop video is too large to package as MP4.");
+  }
+  const mdatHeader = concatBytes(uint32(totalSampleBytes + 8), asciiBytes("mdat"));
+  const ftyp = mp4Box(
+    "ftyp",
+    asciiBytes("isom"),
+    uint32(0x00000200),
+    asciiBytes("isom"),
+    asciiBytes("iso6"),
+    asciiBytes("mp41")
+  );
+
+  const mvhd = mp4FullBox(
+    "mvhd",
+    0,
+    0,
+    uint32(0),
+    uint32(0),
+    uint32(timescale),
+    uint32(duration),
+    fixed1616(1),
+    fixed88(1),
+    zeroBytes(10),
+    makeMatrixBytes(),
+    zeroBytes(24),
+    uint32(2)
+  );
+
+  const tkhd = mp4FullBox(
+    "tkhd",
+    0,
+    0x000007,
+    uint32(0),
+    uint32(0),
+    uint32(1),
+    uint32(0),
+    uint32(duration),
+    zeroBytes(8),
+    uint16(0),
+    uint16(0),
+    uint16(0),
+    uint16(0),
+    makeMatrixBytes(),
+    fixed1616(width),
+    fixed1616(height)
+  );
+
+  const mdhd = mp4FullBox(
+    "mdhd",
+    0,
+    0,
+    uint32(0),
+    uint32(0),
+    uint32(timescale),
+    uint32(duration),
+    uint16(makeLanguageCode("und")),
+    uint16(0)
+  );
+
+  const hdlr = mp4FullBox(
+    "hdlr",
+    0,
+    0,
+    uint32(0),
+    asciiBytes("vide"),
+    zeroBytes(12),
+    asciiBytes("VideoHandler\0")
+  );
+
+  const vmhd = mp4FullBox("vmhd", 0, 0x000001, uint16(0), uint16(0), uint16(0), uint16(0));
+  const dinf = mp4Box(
+    "dinf",
+    mp4FullBox(
+      "dref",
+      0,
+      0,
+      uint32(1),
+      mp4FullBox("url ", 0, 0x000001)
+    )
+  );
+
+  const avcC = mp4Box("avcC", avcDescription);
+  const avc1 = mp4Box(
+    "avc1",
+    zeroBytes(6),
+    uint16(1),
+    zeroBytes(16),
+    uint16(width),
+    uint16(height),
+    fixed1616(72),
+    fixed1616(72),
+    uint32(0),
+    uint16(1),
+    makeCompressorNameBytes("Mesmer Loop Export"),
+    uint16(24),
+    uint16(0xffff),
+    avcC
+  );
+
+  const stsd = mp4FullBox("stsd", 0, 0, uint32(1), avc1);
+  const stts = mp4FullBox("stts", 0, 0, uint32(1), uint32(samples.length), uint32(1));
+  const stsc = mp4FullBox("stsc", 0, 0, uint32(1), uint32(1), uint32(samples.length), uint32(1));
+  const stsz = mp4FullBox(
+    "stsz",
+    0,
+    0,
+    uint32(0),
+    uint32(sampleSizes.length),
+    ...sampleSizes.map((size) => uint32(size))
+  );
+  const stco = mp4FullBox("stco", 0, 0, uint32(1), uint32(0));
+  const stss =
+    keyframes.length && keyframes.length !== samples.length
+      ? mp4FullBox("stss", 0, 0, uint32(keyframes.length), ...keyframes.map((entry) => uint32(entry)))
+      : null;
+
+  const stbl = mp4Box("stbl", stsd, stts, stsc, stsz, stco, stss);
+  const minf = mp4Box("minf", vmhd, dinf, stbl);
+  const mdia = mp4Box("mdia", mdhd, hdlr, minf);
+  const trak = mp4Box("trak", tkhd, mdia);
+  const moov = mp4Box("moov", mvhd, trak);
+
+  const chunkOffset = ftyp.byteLength + moov.byteLength + mdatHeader.byteLength;
+  const stcoTypeIndex = findByteSequence(moov, asciiBytes("stco"));
+  if (stcoTypeIndex === -1) {
+    throw new Error("MP4 muxing failed: stco box missing.");
+  }
+  moov.set(uint32(chunkOffset), stcoTypeIndex + 12);
+
+  return new Blob([ftyp, moov, mdatHeader, ...samples.map((sample) => sample.data)], { type: "video/mp4" });
+}
+
+async function getSupportedWebCodecsMp4Config(width, height, fps) {
+  if (typeof VideoEncoder === "undefined" || typeof VideoFrame === "undefined") {
+    return null;
+  }
+
+  const baseConfig = {
+    width,
+    height,
+    framerate: fps,
+    bitrate: getLoopExportBitrate(width, height, fps),
+    latencyMode: "quality",
+    hardwareAcceleration: "prefer-hardware",
+    avc: { format: "avc" },
+  };
+  const codecCandidates = ["avc1.640033", "avc1.4d0033", "avc1.42E01E"];
+
+  for (const codec of codecCandidates) {
+    try {
+      const support = await VideoEncoder.isConfigSupported({
+        ...baseConfig,
+        codec,
+      });
+      if (support.supported) {
+        return support.config;
+      }
+    } catch (error) {
+      console.warn("WebCodecs config probe failed:", codec, error);
+    }
+  }
+
+  return null;
+}
+
+async function encodeLoopVideoMp4({
+  exportCanvas,
+  width,
+  height,
+  fps,
+  frameCount,
+  loopDuration,
+}) {
+  const config = await getSupportedWebCodecsMp4Config(width, height, fps);
+  if (!config) {
+    return null;
+  }
+
+  const samples = [];
+  let avcDescription = null;
+  let encoderError = null;
+  const frameDurationUs = Math.round(1_000_000 / fps);
+
+  const encoder = new VideoEncoder({
+    output: (chunk, metadata) => {
+      const data = new Uint8Array(chunk.byteLength);
+      chunk.copyTo(data);
+      samples.push({
+        data,
+        isKeyFrame: chunk.type === "key",
+      });
+
+      if (!avcDescription && metadata?.decoderConfig?.description) {
+        avcDescription = new Uint8Array(metadata.decoderConfig.description);
+      }
+    },
+    error: (error) => {
+      encoderError = error;
+    },
+  });
+
+  encoder.configure(config);
+
+  try {
+    for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+      const progress = frameIndex / frameCount;
+      renderLoopFrame(exportCanvas, progress, loopDuration);
+      const frame = new VideoFrame(exportCanvas, {
+        timestamp: frameIndex * frameDurationUs,
+        duration: frameDurationUs,
+      });
+      encoder.encode(frame, {
+        keyFrame: frameIndex === 0 || frameIndex % Math.max(1, fps) === 0,
+      });
+      frame.close();
+
+      if (frameIndex % Math.max(1, Math.ceil(frameCount / 120)) === 0) {
+        setLoopExportProgress("Encoding...", frameIndex / frameCount);
+      }
+
+      if (frameIndex % 2 === 0) {
+        await nextAnimationFrame();
+      }
+
+      while (encoder.encodeQueueSize > 8) {
+        await wait(0);
+      }
+    }
+
+    setLoopExportProgress("Packaging...", 0.96);
+    await nextAnimationFrame();
+    await encoder.flush();
+  } finally {
+    encoder.close();
+  }
+
+  if (encoderError) {
+    throw encoderError;
+  }
+
+  if (!avcDescription || !samples.length) {
+    return null;
+  }
+
+  return {
+    blob: buildMp4FromAvcSamples({
+      width,
+      height,
+      fps,
+      samples,
+      avcDescription,
+    }),
+    extension: "mp4",
+    mimeType: "video/mp4",
+  };
+}
+
+async function recordLoopVideoWithMediaRecorder({
+  exportCanvas,
+  fps,
+  frameCount,
+  frameDuration,
+  loopDuration,
+  format,
+}) {
+  if (typeof HTMLCanvasElement === "undefined" || !HTMLCanvasElement.prototype.captureStream) {
+    return null;
+  }
+
+  const stream = exportCanvas.captureStream(0);
+  const recorder = new MediaRecorder(stream, {
+    mimeType: format.mimeType,
+    videoBitsPerSecond: getLoopExportBitrate(exportCanvas.width, exportCanvas.height, fps),
+  });
+  const chunks = [];
+  const videoTrack = stream.getVideoTracks()[0] || null;
+
+  recorder.addEventListener("dataavailable", (event) => {
+    if (event.data && event.data.size) {
+      chunks.push(event.data);
+    }
+  });
+
+  const stopped = new Promise((resolve, reject) => {
+    recorder.addEventListener("stop", () => {
+      resolve(new Blob(chunks, { type: format.mimeType }));
+    });
+    recorder.addEventListener("error", (event) => {
+      reject(event.error || new Error("Loop video export failed."));
+    });
+  });
+
+  try {
+    recorder.start();
+
+    for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+      const progress = frameIndex / frameCount;
+      renderLoopFrame(exportCanvas, progress, loopDuration);
+
+      if (videoTrack && typeof videoTrack.requestFrame === "function") {
+        videoTrack.requestFrame();
+      }
+
+      if (frameIndex % Math.max(1, Math.ceil(frameCount / 120)) === 0) {
+        setLoopExportProgress("Recording...", frameIndex / frameCount);
+      }
+
+      await wait(frameDuration);
+    }
+
+    setLoopExportProgress("Finalizing...", 0.97);
+    recorder.stop();
+    const blob = await stopped;
+    return {
+      blob,
+      extension: format.extension,
+      mimeType: format.mimeType,
+    };
+  } finally {
+    if (recorder.state !== "inactive") {
+      recorder.stop();
+    }
+    stream.getTracks().forEach((track) => track.stop());
+  }
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  window.setTimeout(() => {
+    URL.revokeObjectURL(url);
+  }, 1000);
+}
+
+function getActiveExportFilename(extension) {
+  if (state.appMode === APP_MODE_COMPOSER) {
+    const current = getCurrentCustomComposition();
+    const baseName = (current?.name || "custom-composition").trim().replace(/\s+/g, "-").toLowerCase();
+    return `${baseName}.${extension}`;
+  }
+
   const current = getCurrentIllusion();
+  const seedPart = current ? shortSeed(current.seed).replace(/\.+/g, "-") : "current";
+  return `illusion-${seedPart}.${extension}`;
+}
+
+function roundToEven(value) {
+  const rounded = Math.max(2, Math.round(value));
+  return rounded % 2 === 0 ? rounded : rounded + 1;
+}
+
+function setLoopExportProgress(stage, progress = null) {
+  if (!state.exportingLoop) {
+    return;
+  }
+  if (exportProgressWrap) {
+    exportProgressWrap.hidden = false;
+  }
+  if (exportProgressText) {
+    exportProgressText.textContent = stage;
+  }
+  if (exportProgressFill && typeof progress === "number" && Number.isFinite(progress)) {
+    const ratio = clamp(progress, 0, 1);
+    exportProgressFill.style.width = `${Math.round(ratio * 100)}%`;
+  }
+  if (typeof progress === "number" && Number.isFinite(progress)) {
+    const percent = Math.round(clamp(progress, 0, 1) * 100);
+    exportLoopBtn.textContent = `${stage} ${percent}%`;
+    return;
+  }
+  exportLoopBtn.textContent = stage;
+}
+
+function getLoopExportSize() {
+  return getLoopExportDimensions();
+}
+
+function drawExportAtmosphere(ctx, width, height) {
+  ctx.save();
+
+  const hazeA = ctx.createRadialGradient(width * 0.2, height * 0.28, 0, width * 0.2, height * 0.28, width * 0.22);
+  hazeA.addColorStop(0, "rgba(255, 255, 255, 0.038)");
+  hazeA.addColorStop(1, "rgba(255, 255, 255, 0)");
+  ctx.fillStyle = hazeA;
+  ctx.fillRect(0, 0, width, height);
+
+  const hazeB = ctx.createRadialGradient(width * 0.78, height * 0.66, 0, width * 0.78, height * 0.66, width * 0.28);
+  hazeB.addColorStop(0, "rgba(255, 255, 255, 0.024)");
+  hazeB.addColorStop(1, "rgba(255, 255, 255, 0)");
+  ctx.fillStyle = hazeB;
+  ctx.fillRect(0, 0, width, height);
+
+  const crossLightX = ctx.createLinearGradient(0, 0, width, 0);
+  crossLightX.addColorStop(0, "rgba(255, 255, 255, 0)");
+  crossLightX.addColorStop(0.5, "rgba(255, 255, 255, 0.018)");
+  crossLightX.addColorStop(1, "rgba(255, 255, 255, 0)");
+  ctx.fillStyle = crossLightX;
+  ctx.fillRect(0, 0, width, height);
+
+  const crossLightY = ctx.createLinearGradient(0, 0, 0, height);
+  crossLightY.addColorStop(0, "rgba(255, 255, 255, 0)");
+  crossLightY.addColorStop(0.5, "rgba(255, 255, 255, 0.012)");
+  crossLightY.addColorStop(1, "rgba(255, 255, 255, 0)");
+  ctx.fillStyle = crossLightY;
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.globalCompositeOperation = "screen";
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.018)";
+  ctx.lineWidth = 1;
+  for (let y = 0.5; y < height; y += 5) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(width, y);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.014)";
+  for (let x = 0.5; x < width; x += 9) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, height);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.014)";
+  for (let x = 0.5; x < width; x += 38) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, height);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.01)";
+  for (let y = 0.5; y < height; y += 26) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(width, y);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+function renderLoopFrame(targetCanvas, progress, duration) {
+  const previousRenderMotion = activeRenderMotion;
+  const loopProgress = (clamp(EXPORT_LOOP_START_FRACTION, 0, 0.5) + progress) % 1;
+  const now = loopProgress * duration * 1000;
+  activeRenderMotion = {
+    rawTime: getActiveSceneRenderTimeSeconds(now, false),
+    exportLoop: true,
+    progress: loopProgress,
+    duration,
+    timeScale: getActiveSceneRenderTimeScale(false),
+  };
+
+  try {
+    renderActiveScene(targetCanvas, now, false);
+    drawExportAtmosphere(targetCanvas.getContext("2d"), targetCanvas.width, targetCanvas.height);
+  } finally {
+    activeRenderMotion = previousRenderMotion;
+  }
+}
+
+function setLoopExportState(isExporting) {
+  state.exportingLoop = isExporting;
+  exportLoopBtn.disabled = isExporting;
+  exportAspectSelect.disabled = isExporting;
+  exportResolutionSelect.disabled = isExporting;
+  exportFpsSelect.disabled = isExporting;
+
+  if (isExporting) {
+    exportLoopBtn.textContent = "Preparing...";
+    if (exportProgressWrap) {
+      exportProgressWrap.hidden = false;
+    }
+    if (exportProgressFill) {
+      exportProgressFill.style.width = "0%";
+    }
+    if (exportProgressText) {
+      exportProgressText.textContent = "Preparing export...";
+    }
+    renderActiveScene(canvas, performance.now(), true);
+    if (state.appMode === APP_MODE_COMPOSER && composerPreviewCanvas && !composerPanelEl.hidden) {
+      renderCustomComposition(getCurrentCustomComposition(), composerPreviewCanvas, performance.now(), true);
+    }
+    return;
+  }
+
+  exportLoopBtn.textContent = "Export Loop Video";
+  if (exportProgressWrap) {
+    exportProgressWrap.hidden = true;
+  }
+  if (exportProgressFill) {
+    exportProgressFill.style.width = "0%";
+  }
+  if (exportProgressText) {
+    exportProgressText.textContent = "Preparing export...";
+  }
+}
+
+function exportCurrentPng() {
+  const current =
+    state.appMode === APP_MODE_COMPOSER ? getCurrentCustomComposition() : getCurrentIllusion();
   if (!current) {
     return;
   }
-  const exportCanvas = document.createElement("canvas");
-  exportCanvas.width = COMPOSITION_WIDTH * EXPORT_SCALE;
-  exportCanvas.height = COMPOSITION_HEIGHT * EXPORT_SCALE;
-  renderIllusion(current, exportCanvas, performance.now(), true);
+  renderActiveScene(canvas, performance.now(), true);
   const link = document.createElement("a");
-  link.href = exportCanvas.toDataURL("image/png");
-  link.download = `illusion-${shortSeed(current.seed).replace(/\.+/g, "-")}.png`;
+  link.href = canvas.toDataURL("image/png");
+  link.download = getActiveExportFilename("png");
   link.click();
 }
 
+async function exportCurrentLoopVideo() {
+  const current =
+    state.appMode === APP_MODE_COMPOSER ? getCurrentCustomComposition() : getCurrentIllusion();
+  if (!current || state.exportingLoop) {
+    return;
+  }
+
+  const recorderFormat = getSupportedRecorderVideoFormat();
+  if (!recorderFormat && (typeof VideoEncoder === "undefined" || typeof VideoFrame === "undefined")) {
+    window.alert("Loop video export is not supported in this browser.");
+    return;
+  }
+
+  const exportSize = getLoopExportSize();
+  const loopFrequencies = collectSceneLoopFrequencies();
+  const exportFps = getLoopExportFps();
+  const loopDuration = pickLoopDuration(loopFrequencies, exportFps);
+  const exportCanvas = document.createElement("canvas");
+  exportCanvas.width = exportSize.width;
+  exportCanvas.height = exportSize.height;
+  exportCanvas.dataset.matchViewportComposition = "true";
+  const frameCount = Math.max(2, Math.round(loopDuration * exportFps));
+  const frameDuration = 1000 / exportFps;
+
+  try {
+    setLoopExportState(true);
+    setMenuOpen(false);
+    setLoopExportProgress("Preparing...", 0.02);
+    await nextAnimationFrame();
+    let exportResult = await encodeLoopVideoMp4({
+      exportCanvas,
+      width: exportSize.width,
+      height: exportSize.height,
+      fps: exportFps,
+      frameCount,
+      loopDuration,
+    });
+
+    if (!exportResult) {
+      if (!recorderFormat) {
+        throw new Error("No supported video export format is available.");
+      }
+      exportResult = await recordLoopVideoWithMediaRecorder({
+        exportCanvas,
+        fps: exportFps,
+        frameCount,
+        frameDuration,
+        loopDuration,
+        format: recorderFormat,
+      });
+    }
+
+    setLoopExportProgress("Downloading...", 1);
+    await nextAnimationFrame();
+    downloadBlob(exportResult.blob, getActiveExportFilename(exportResult.extension));
+  } catch (error) {
+    console.error(error);
+    window.alert("Loop video export failed. Check the console for details.");
+  } finally {
+    setLoopExportState(false);
+  }
+}
+
 function handleSwipeStart(event) {
-  if (state.menuOpen || event.touches.length !== 1) {
+  if (state.appMode === APP_MODE_COMPOSER || state.menuOpen || event.touches.length !== 1) {
     return;
   }
   const touch = event.touches[0];
@@ -2757,7 +5044,7 @@ function handleSwipeStart(event) {
 }
 
 function handleSwipeEnd(event) {
-  if (!state.touchStart || state.menuOpen) {
+  if (state.appMode === APP_MODE_COMPOSER || !state.touchStart || state.menuOpen) {
     state.touchStart = null;
     return;
   }
@@ -2787,6 +5074,10 @@ function handleKeydown(event) {
     return;
   }
 
+  if (state.appMode === APP_MODE_COMPOSER) {
+    return;
+  }
+
   if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
     return;
   }
@@ -2804,25 +5095,73 @@ function handleKeydown(event) {
   navigateNextOrNew();
 }
 
+function startComposerMenuResize(event) {
+  if (state.appMode !== APP_MODE_COMPOSER || window.innerWidth <= 860) {
+    return;
+  }
+
+  event.preventDefault();
+  const pointerId = event.pointerId;
+  composerResizeHandleEl.setPointerCapture(pointerId);
+  state.menuResizeSession = { pointerId };
+  document.body.style.cursor = "ew-resize";
+  document.body.style.userSelect = "none";
+}
+
+function handleComposerMenuResize(event) {
+  if (!state.menuResizeSession || state.menuResizeSession.pointerId !== event.pointerId) {
+    return;
+  }
+
+  const rect = sideMenuEl.getBoundingClientRect();
+  state.composerMenuWidth = clampComposerMenuWidth(event.clientX - rect.left);
+  applyMenuWidth();
+}
+
+function stopComposerMenuResize(event) {
+  if (!state.menuResizeSession || state.menuResizeSession.pointerId !== event.pointerId) {
+    return;
+  }
+
+  if (composerResizeHandleEl.hasPointerCapture(event.pointerId)) {
+    composerResizeHandleEl.releasePointerCapture(event.pointerId);
+  }
+  state.menuResizeSession = null;
+  document.body.style.cursor = "";
+  document.body.style.userSelect = "";
+  persistState();
+}
+
 function bindEvents() {
   newBtn.addEventListener("click", () => spawnOne("fresh"));
   evolveBtn.addEventListener("click", () => spawnOne("evolve"));
   batchBtn.addEventListener("click", () => spawnBatch(12));
   autoplayBtn.addEventListener("click", toggleAutoplay);
   exportBtn.addEventListener("click", exportCurrentPng);
+  exportLoopBtn.addEventListener("click", () => {
+    void exportCurrentLoopVideo();
+  });
+  shareBtn.addEventListener("click", () => {
+    sharePayload(getCurrentSharePayload(), shareBtn);
+  });
 
-  likeBtn.addEventListener("click", toggleLike);
-  favoriteBtn.addEventListener("click", toggleFavorite);
+  saveBtn.addEventListener("click", toggleSave);
   prevBtn.addEventListener("click", navigateOlder);
   nextBtn.addEventListener("click", navigateNextOrNew);
 
   menuToggleBtn.addEventListener("click", () => setMenuOpen(!state.menuOpen));
   menuCloseBtn.addEventListener("click", () => setMenuOpen(false));
   menuBackdrop.addEventListener("click", () => setMenuOpen(false));
+  composerResizeHandleEl.addEventListener("pointerdown", startComposerMenuResize);
+  composerResizeHandleEl.addEventListener("pointermove", handleComposerMenuResize);
+  composerResizeHandleEl.addEventListener("pointerup", stopComposerMenuResize);
+  composerResizeHandleEl.addEventListener("pointercancel", stopComposerMenuResize);
 
   viewerEl.addEventListener("touchstart", handleSwipeStart, { passive: true });
   viewerEl.addEventListener("touchend", handleSwipeEnd, { passive: true });
   window.addEventListener("keydown", handleKeydown);
+  generatorModeBtn.addEventListener("click", () => setAppMode(APP_MODE_GENERATOR));
+  composerModeBtn.addEventListener("click", () => setAppMode(APP_MODE_COMPOSER));
 
   complexityRange.addEventListener("input", () => {
     state.options.complexity = Number(complexityRange.value);
@@ -2849,6 +5188,24 @@ function bindEvents() {
     persistState();
   });
 
+  exportAspectSelect.addEventListener("change", () => {
+    state.exportOptions.aspect = normalizeExportAspect(exportAspectSelect.value);
+    syncLoopExportControls();
+    persistState();
+  });
+
+  exportResolutionSelect.addEventListener("change", () => {
+    state.exportOptions.resolution = normalizeExportResolution(exportResolutionSelect.value);
+    syncLoopExportControls();
+    persistState();
+  });
+
+  exportFpsSelect.addEventListener("change", () => {
+    state.exportOptions.fps = normalizeExportFps(exportFpsSelect.value);
+    syncLoopExportControls();
+    persistState();
+  });
+
   researchListEl.addEventListener("change", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLInputElement) || target.type !== "checkbox") {
@@ -2857,27 +5214,118 @@ function bindEvents() {
     setPrincipleEnabled(target.dataset.principleId, target.checked);
   });
 
+  customNameInput.addEventListener("input", () => {
+    updateCurrentCustom((current) => {
+      current.name = customNameInput.value.slice(0, 48);
+    }, { syncControls: false, renderLayers: false });
+    setCustomStatus("Name updated.");
+  });
+
+  customBackgroundInput.addEventListener("input", () => {
+    updateCurrentCustom((current) => {
+      current.backgroundColor = customBackgroundInput.value;
+    }, { syncControls: false, renderLayers: false });
+    setCustomStatus("Background color updated.");
+  });
+
+  customSchemeSelect.addEventListener("change", () => {
+    updateCurrentCustom((current) => {
+      current.schemeId = customSchemeSelect.value;
+    }, { syncControls: false, renderLayers: false });
+    setCustomStatus("Overall color scheme updated.");
+  });
+
+  customNewBtn.addEventListener("click", createNewCustomDraft);
+  customSaveBtn.addEventListener("click", saveCurrentCustomComposition);
+  customShareBtn.addEventListener("click", () => {
+    sharePayload(getCurrentSharePayload(), customShareBtn, "Share link copied for this composition.");
+  });
+
+  elementPickerEl.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-add-element]") : null;
+    if (!button) {
+      return;
+    }
+
+    updateCurrentCustom((current) => {
+      current.layers.push(makeCustomLayer(button.dataset.addElement));
+    });
+    setCustomStatus("Added a new top layer.");
+  });
+
+  savedCustomListEl.addEventListener("click", (event) => {
+    const shareButton = event.target instanceof Element ? event.target.closest("[data-share-custom]") : null;
+    if (shareButton) {
+      const custom = state.customCompositions.find((item) => item.id === shareButton.dataset.shareCustom);
+      if (custom) {
+        const shared = cloneJson(custom);
+        shared.id = null;
+        sharePayload(
+          {
+            version: 1,
+            mode: APP_MODE_COMPOSER,
+            item: shared,
+          },
+          shareButton,
+          `Share link copied for ${custom.name}.`
+        );
+      }
+      return;
+    }
+
+    const button = event.target instanceof Element ? event.target.closest("[data-load-custom]") : null;
+    if (!button) {
+      return;
+    }
+    loadCustomComposition(button.dataset.loadCustom);
+  });
+
+  layerListEl.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-remove-layer]") : null;
+    if (!button) {
+      return;
+    }
+
+    updateCurrentCustom((current) => {
+      current.layers = current.layers.filter((layer) => layer.id !== button.dataset.removeLayer);
+    });
+    setCustomStatus("Layer removed.");
+  });
+
+  layerListEl.addEventListener("input", handleLayerEditorInput);
+  layerListEl.addEventListener("change", handleLayerEditorInput);
+
   window.addEventListener("resize", () => {
+    applyMenuWidth();
     resizeCanvas();
+    resizeComposerPreviewCanvas();
   });
 }
 
 function runAnimation(now) {
-  const current = getCurrentIllusion();
+  const currentIllusion = getCurrentIllusion();
 
-  if (current && now - state.frameGate >= 30) {
-    state.frameGate = now;
-    renderIllusion(current, canvas, now, false);
+  if (state.exportingLoop) {
+    requestAnimationFrame(runAnimation);
+    return;
   }
 
-  if (state.autoplay) {
+  if (now - state.frameGate >= 30) {
+    state.frameGate = now;
+    renderActiveScene(canvas, now, false);
+    if (state.appMode === APP_MODE_COMPOSER && composerPreviewCanvas && !composerPanelEl.hidden) {
+      renderCustomComposition(getCurrentCustomComposition(), composerPreviewCanvas, now, false);
+    }
+  }
+
+  if (state.appMode === APP_MODE_GENERATOR && state.autoplay) {
     if (!state.lastAutoplayAt) {
       state.lastAutoplayAt = now;
     }
 
     if (now - state.lastAutoplayAt > 2600) {
       state.lastAutoplayAt = now;
-      const mode = current && Math.random() < 0.55 ? "evolve" : "fresh";
+      const mode = currentIllusion && Math.random() < 0.55 ? "evolve" : "fresh";
       spawnOne(mode);
     }
   }
@@ -2887,16 +5335,23 @@ function runAnimation(now) {
 
 function bootstrap() {
   restoreState();
+  hydrateFromShareLink();
   renderResearchList();
+  renderElementPicker();
+  renderSavedCustomList();
+  renderLayerList();
 
   complexityRange.value = String(state.options.complexity);
   motionRange.value = String(state.options.motion);
   noveltyRange.value = String(Math.round(state.options.noveltyBias * 100));
   syncControlReadouts();
+  syncLoopExportControls();
+  syncCustomControls();
 
   resizeCanvas();
   bindEvents();
   setMenuOpen(false);
+  setAppMode(state.appMode);
 
   if (!state.discoveries.length) {
     spawnBatch(14);
@@ -2910,6 +5365,14 @@ function bootstrap() {
     }
     updateInterface();
   }
+
+  if (!state.customDraft) {
+    state.customDraft = makeEmptyCustomComposition();
+    syncCustomControls();
+    renderLayerList();
+  }
+
+  resizeComposerPreviewCanvas();
 
   requestAnimationFrame(runAnimation);
 }
