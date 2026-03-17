@@ -332,6 +332,28 @@ const researchPrinciples = [
     draw: drawPeripheralDrift,
   },
   {
+    id: "bulging_checkerboard",
+    name: "Bulging Checkerboard",
+    mechanism:
+      "A warped checker lattice swells and relaxes across the whole frame, making rigid tiles feel inflated and unstable.",
+    fullScreenMotion: true,
+    alphaRange: [0.38, 0.68],
+    preferredBlends: ["soft-light", "overlay", "multiply", "exclusion"],
+    scaleRange: [1.08, 1.28],
+    rotationRange: [-0.18, 0.18],
+    offsetRange: [-0.04, 0.04],
+    sample: (rng, options) => ({
+      rows: rng.int(7, 12 + Math.floor(options.complexity / 3)),
+      cols: rng.int(8, 14 + Math.floor(options.complexity / 3)),
+      bulge: rng.float(0.18, 0.42),
+      twist: rng.float(0.05, 0.18),
+      drift: rng.float(0.05, 0.2 + options.motion * 0.04),
+      tilt: rng.float(-0.22, 0.22),
+      seam: rng.float(0.04, 0.12),
+    }),
+    draw: drawBulgingCheckerboard,
+  },
+  {
     id: "kanizsa_web",
     name: "Kanizsa Contour Fields",
     mechanism:
@@ -424,6 +446,27 @@ const researchPrinciples = [
       drift: rng.float(0.04, 0.34 + options.motion * 0.04),
     }),
     draw: drawTroxlerField,
+  },
+  {
+    id: "ripple_tunnel_mesh",
+    name: "Ripple Tunnel Mesh",
+    mechanism:
+      "Perspective rings and converging spokes cycle through a false tunnel that reads as deep, fast, and immediate.",
+    fullScreenMotion: true,
+    sample: (rng, options) => ({
+      slices: rng.int(16, 30 + Math.floor(options.complexity / 2)),
+      spokes: rng.int(18, 42 + options.complexity),
+      aperture: rng.float(0.04, 0.11),
+      squash: rng.float(0.54, 0.84),
+      flow: rng.float(0.05, 0.16 + options.motion * 0.025),
+      spin: rng.float(0.02, 0.08 + options.motion * 0.012) * rng.sign(),
+      lineWidth: rng.float(0.9, 2.2),
+      depthCurve: rng.float(1.45, 2.3),
+      ripple: rng.float(0.012, 0.055),
+      wobble: rng.float(0.03, 0.1),
+      vanishDrift: rng.float(0.01, 0.05 + options.motion * 0.01),
+    }),
+    draw: drawRippleTunnelMesh,
   },
   {
     id: "muller_lyer_field",
@@ -846,7 +889,9 @@ function mergeImmersiveMotionPrinciples(ids) {
     return normalized;
   }
 
-  const broadPoolThreshold = Math.max(10, allPrincipleIds.length - immersiveMotionPrincipleIds.length - 2);
+  // If the user keeps a broad mix enabled, pull immersive motion entries back in so
+  // gallery browsing continues to surface the hero fullscreen effects after updates.
+  const broadPoolThreshold = Math.max(10, Math.ceil(allPrincipleIds.length * 0.5));
   if (normalized.length < broadPoolThreshold) {
     return normalized;
   }
@@ -1466,17 +1511,92 @@ function sampleLayer(principleId, rng, options) {
     Array.isArray(profile.preferredBlends) && profile.preferredBlends.length
       ? profile.preferredBlends
       : blendModes;
+  const rotationRange = Array.isArray(profile.rotationRange) ? profile.rotationRange : [-0.3, 0.3];
+  const scaleRange = Array.isArray(profile.scaleRange) ? profile.scaleRange : [0.8, 1.16];
+  const offsetRange = Array.isArray(profile.offsetRange) ? profile.offsetRange : [-0.12, 0.12];
 
   return {
     principleId,
     params,
     alpha: clamp(rng.float(alphaRange[0], alphaRange[1]), 0.25, 1),
     blend: pick(allowedBlends, rng),
-    rotation: rng.float(-0.3, 0.3),
-    scale: rng.float(0.8, 1.16),
-    offsetX: rng.float(-0.12, 0.12),
-    offsetY: rng.float(-0.12, 0.12),
+    rotation: rng.float(rotationRange[0], rotationRange[1]),
+    scale: rng.float(scaleRange[0], scaleRange[1]),
+    offsetX: rng.float(offsetRange[0], offsetRange[1]),
+    offsetY: rng.float(offsetRange[0], offsetRange[1]),
   };
+}
+
+function chooseCoveragePrinciple() {
+  const enabledPrinciples = getEnabledPrinciples();
+  if (enabledPrinciples.length < 2 || !state.discoveries.length) {
+    return null;
+  }
+
+  const windowSize = clamp(enabledPrinciples.length * 2, 8, 24);
+  const recentDiscoveries = state.discoveries.slice(0, windowSize);
+  const counts = new Map(enabledPrinciples.map((principleId) => [principleId, 0]));
+
+  for (const discovery of recentDiscoveries) {
+    const principles = Array.isArray(discovery?.principles)
+      ? discovery.principles
+      : Array.from(new Set((discovery?.layers || []).map((layer) => layer.principleId)));
+    for (const principleId of principles) {
+      if (counts.has(principleId)) {
+        counts.set(principleId, counts.get(principleId) + 1);
+      }
+    }
+  }
+
+  let targetId = null;
+  let bestScore = Infinity;
+  for (const principleId of enabledPrinciples) {
+    const profile = researchById[principleId];
+    const count = counts.get(principleId) ?? 0;
+    const score = count + (profile?.fullScreenMotion ? -0.2 : 0);
+    if (score < bestScore) {
+      bestScore = score;
+      targetId = principleId;
+    }
+  }
+
+  return targetId;
+}
+
+function normalizeGeneratedLayers(layers) {
+  if (!Array.isArray(layers) || layers.length < 2) {
+    return layers;
+  }
+
+  const normalized = layers.map((layer) => ({ ...layer }));
+  const topIndex = normalized.length - 1;
+
+  if (normalized[topIndex]?.principleId === "bulging_checkerboard") {
+    for (let i = topIndex - 1; i >= 0; i -= 1) {
+      if (normalized[i]?.principleId !== "bulging_checkerboard") {
+        const topLayer = normalized[topIndex];
+        normalized[topIndex] = normalized[i];
+        normalized[i] = topLayer;
+        break;
+      }
+    }
+  }
+
+  for (let i = 0; i < normalized.length; i += 1) {
+    const layer = normalized[i];
+    if (layer?.principleId !== "bulging_checkerboard") {
+      continue;
+    }
+
+    const isTopLayer = i === normalized.length - 1;
+    layer.alpha = Math.min(layer.alpha, isTopLayer ? 0.52 : 0.64);
+
+    if (!layer.blend || layer.blend === "source-over") {
+      layer.blend = isTopLayer ? "soft-light" : "overlay";
+    }
+  }
+
+  return normalized;
 }
 
 function needsFixationAid(principles) {
@@ -1714,7 +1834,7 @@ function computeCompositeScore(illusion) {
   return ratingScore + noveltyScore + predictedScore + qualityScore + saveBonus;
 }
 
-function buildIllusion(seed, parentId = null) {
+function buildIllusion(seed, parentId = null, forcedPrincipleId = null) {
   const rng = new SeedRng(seed);
   const palette = makePalette(rng);
   const enabledPrinciples = getEnabledPrinciples();
@@ -1727,7 +1847,17 @@ function buildIllusion(seed, parentId = null) {
 
   const picked = [];
   const layers = [];
-  for (let i = 0; i < layerCount; i += 1) {
+  const validForcedPrinciple =
+    typeof forcedPrincipleId === "string" && enabledPrinciples.includes(forcedPrincipleId)
+      ? forcedPrincipleId
+      : null;
+
+  if (validForcedPrinciple) {
+    picked.push(validForcedPrinciple);
+    layers.push(sampleLayer(validForcedPrinciple, rng, state.options));
+  }
+
+  for (let i = layers.length; i < layerCount; i += 1) {
     const uniquePicked = Array.from(new Set(picked));
     const unseenPrinciples = enabledPrinciples.filter((principleId) => !uniquePicked.includes(principleId));
     const shouldIntroduceNew =
@@ -1746,6 +1876,7 @@ function buildIllusion(seed, parentId = null) {
     layers.push(sampleLayer(principleId, rng, state.options));
   }
 
+  const normalizedLayers = normalizeGeneratedLayers(layers);
   const principles = Array.from(new Set(picked));
   const fixationAid = needsFixationAid(principles) ? makeFixationAid(rng) : null;
 
@@ -1755,7 +1886,7 @@ function buildIllusion(seed, parentId = null) {
     createdAt: Date.now(),
     parentId,
     palette,
-    layers,
+    layers: normalizedLayers,
     principles,
     fixationAid,
     motionStrength: state.options.motion / 10,
@@ -1882,11 +2013,17 @@ function proposeBestCandidate(mode = "fresh") {
   const parent = mode === "evolve" ? getCurrentIllusion() : null;
   const candidateCount =
     18 + Math.round(state.options.noveltyBias * 18) + Math.round(state.options.complexity * 1.1);
+  const coveragePrincipleId = chooseCoveragePrinciple();
+  const coverageSeedCount = coveragePrincipleId ? Math.max(4, Math.ceil(candidateCount * 0.22)) : 0;
   const candidates = [];
 
   for (let i = 0; i < candidateCount; i += 1) {
     const seed = parent ? mutateSeed(parent.seed, i) : makeSeed(`-${i.toString(36)}`);
-    const candidate = buildIllusion(seed, parent?.id || null);
+    const forcedPrincipleId = i < coverageSeedCount ? coveragePrincipleId : null;
+    const candidate = buildIllusion(seed, parent?.id || null, forcedPrincipleId);
+    candidate.coverageBonus =
+      coveragePrincipleId && candidate.principles.includes(coveragePrincipleId) ? 0.08 : 0;
+    candidate.quickObjective += candidate.coverageBonus;
     candidates.push(candidate);
   }
 
@@ -1918,7 +2055,8 @@ function proposeBestCandidate(mode = "fresh") {
     const quality = evaluateCandidateQuality(fallback);
     fallback.qualityScore = quality.qualityScore;
     fallback.qualityMetrics = quality.metrics;
-    fallback.objective = fallback.quickObjective + fallback.qualityScore * 0.35;
+    fallback.objective =
+      fallback.quickObjective + fallback.qualityScore * 0.35 + (fallback.coverageBonus || 0);
     fallback.compositeScore = computeCompositeScore(fallback);
     return fallback;
   }
@@ -1940,7 +2078,8 @@ function proposeBestCandidate(mode = "fresh") {
         candidate.novelty * noveltyWeight +
         candidate.predictedAppeal * appealWeight +
         candidate.qualityScore * 0.48 +
-        crowdingBonus * 0.22;
+        crowdingBonus * 0.22 +
+        (candidate.coverageBonus || 0);
       candidate.compositeScore = computeCompositeScore(candidate);
     }
   }
@@ -2791,6 +2930,33 @@ function drawVignette(ctx, width, height, palette) {
   ctx.fillRect(0, 0, width, height);
 }
 
+function drawFixationGlyph(ctx, width, height, palette, scale = 1) {
+  const cx = width * 0.5;
+  const cy = height * 0.5;
+  const base = Math.min(width, height) * 0.012 * scale;
+
+  ctx.save();
+  ctx.lineWidth = Math.max(1.2, base * 0.18);
+  ctx.strokeStyle = cssTone(toneShift(palette.ink, 0, -8, 6), 0.92);
+  ctx.beginPath();
+  ctx.moveTo(cx - base * 1.4, cy);
+  ctx.lineTo(cx + base * 1.4, cy);
+  ctx.moveTo(cx, cy - base * 1.4);
+  ctx.lineTo(cx, cy + base * 1.4);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, base * 0.92, 0, TAU);
+  ctx.strokeStyle = cssTone(toneShift(palette.accents[0], 0, -4, 18), 0.48);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, base * 0.22, 0, TAU);
+  ctx.fillStyle = cssTone(palette.ink, 0.95);
+  ctx.fill();
+  ctx.restore();
+}
+
 function getViewportCompositionScale(targetCanvas, width, height) {
   const dpr = window.devicePixelRatio || 1;
 
@@ -3359,6 +3525,69 @@ function drawZollnerLines(ctx, width, height, params, palette) {
   }
 }
 
+function drawBulgingCheckerboard(ctx, width, height, params, palette, time) {
+  const cx = width * 0.5;
+  const cy = height * 0.5;
+  const cellW = width / params.cols;
+  const cellH = height / params.rows;
+  const overdraw = Math.max(cellW, cellH) * 3 + Math.hypot(width, height) * 0.1;
+  const extraCols = Math.max(3, Math.ceil(overdraw / cellW));
+  const extraRows = Math.max(3, Math.ceil(overdraw / cellH));
+  const phase = getMotionAngle(params.drift);
+  const seam = Math.max(1.2, Math.min(cellW, cellH) * params.seam);
+  const dark = toneShift(palette.bgA, 0, -20, -16);
+  const light = toneShift(palette.ink, 0, -12, 14);
+
+  ctx.fillStyle = cssTone(toneShift(palette.bgB, 0, -16, -6), 0.98);
+  ctx.fillRect(0, 0, width, height);
+
+  function warpPoint(x, y) {
+    const dx = (x - cx) / (width * 0.5);
+    const dy = (y - cy) / (height * 0.5);
+    const radius = Math.min(1.35, Math.hypot(dx, dy));
+    const falloff = Math.max(0, 1 - radius * radius * 0.72);
+    const localTwist = params.twist * falloff + Math.sin(radius * 7 - phase * 0.8) * params.twist * 0.18;
+    const localBulge = 1 + falloff * (params.bulge + Math.sin(phase + radius * 9) * params.bulge * 0.18);
+    const angle = Math.atan2(dy, dx) + localTwist;
+    const distance = Math.hypot(dx, dy) * localBulge;
+    return {
+      x: cx + Math.cos(angle) * distance * width * 0.5,
+      y: cy + Math.sin(angle) * distance * height * 0.5,
+    };
+  }
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(params.tilt + Math.sin(phase * 0.45) * 0.06);
+  ctx.translate(-cx, -cy);
+
+  for (let row = -extraRows; row <= params.rows + extraRows; row += 1) {
+    for (let col = -extraCols; col <= params.cols + extraCols; col += 1) {
+      const x0 = col * cellW;
+      const y0 = row * cellH;
+      const p0 = warpPoint(x0, y0);
+      const p1 = warpPoint(x0 + cellW, y0);
+      const p2 = warpPoint(x0 + cellW, y0 + cellH);
+      const p3 = warpPoint(x0, y0 + cellH);
+      const tone = (row + col) % 2 === 0 ? dark : light;
+
+      ctx.beginPath();
+      ctx.moveTo(p0.x, p0.y);
+      ctx.lineTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+      ctx.lineTo(p3.x, p3.y);
+      ctx.closePath();
+      ctx.fillStyle = cssTone(tone, 0.94);
+      ctx.fill();
+      ctx.strokeStyle = cssTone(toneShift(tone, 0, -18, 10), 0.22);
+      ctx.lineWidth = seam * 0.14;
+      ctx.stroke();
+    }
+  }
+
+  ctx.restore();
+}
+
 function drawScintillatingGrid(ctx, width, height, params, palette, time, illusion) {
   const gapX = width / (params.cols + 1);
   const gapY = height / (params.rows + 1);
@@ -3444,6 +3673,64 @@ function drawPeripheralDrift(ctx, width, height, params, palette, time) {
   }
 
   ctx.restore();
+}
+
+function drawPlaidShearField(ctx, width, height, params, palette, time) {
+  const bgTone = toneShift(palette.bgA, 0, -18, -12);
+  const stripeA = toneShift(palette.accents[0], 0, 4, 10);
+  const stripeB = toneShift(palette.accents[2], 0, -10, 8);
+  const bandTone = toneShift(palette.ink, 0, -18, 14);
+
+  drawStripeField(
+    ctx,
+    width,
+    height,
+    params.spacingA,
+    params.angleA,
+    params.stripeWidthA,
+    cssTone(stripeA, 0.22),
+    cssTone(bgTone, 0.98),
+    params.driftA
+  );
+  drawStripePlane(
+    ctx,
+    width,
+    height,
+    params.spacingB,
+    params.angleB,
+    params.stripeWidthB,
+    cssTone(stripeB, 0.14),
+    null,
+    -params.driftB
+  );
+
+  const bandHeight = height / (params.bands + params.overlap);
+  const bandTravel = getMotionShift(params.bandDrift, width * params.shear, width * params.shear * 2);
+
+  for (let band = -1; band <= params.bands + 1; band += 1) {
+    const y = band * bandHeight * params.overlap;
+    const shift = Math.sin(getMotionAngle(params.bandDrift) + band * 0.9) * bandTravel;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, y, width, bandHeight * 1.12);
+    ctx.clip();
+    ctx.translate(shift, 0);
+    drawStripePlane(
+      ctx,
+      width * 1.4,
+      bandHeight * 1.6,
+      params.spacingA * 0.8,
+      params.angleA + params.angleB * 0.18,
+      params.stripeWidthA * 0.86,
+      cssTone(bandTone, 0.18),
+      null,
+      params.driftA * 0.7
+    );
+    ctx.restore();
+
+    ctx.fillStyle = cssTone(palette.ink, 0.04);
+    ctx.fillRect(0, y, width, Math.max(1, bandHeight * 0.04));
+  }
 }
 
 function drawKanizsaWeb(ctx, width, height, params, palette, time) {
@@ -3986,6 +4273,95 @@ function drawTroxlerField(ctx, width, height, params, palette, time) {
     ctx.arc(x, y, size, 0, TAU);
     ctx.fill();
   }
+}
+
+function drawRippleTunnelMesh(ctx, width, height, params, palette, time) {
+  const cx = width * 0.5;
+  const cy = height * 0.5;
+  const minDim = Math.min(width, height);
+  const outer = Math.hypot(width, height) * 0.68;
+  const aperture = minDim * params.aperture;
+  const flowTurns = ((getMotionAngle(params.flow) / TAU) % 1 + 1) % 1;
+  const spin = getMotionAngle(params.spin);
+  const drift = getMotionAngle(params.vanishDrift);
+  const vanishX = cx + Math.sin(drift * 0.7) * width * 0.06;
+  const vanishY = cy + Math.cos(drift * 0.55) * height * 0.05;
+
+  ctx.fillStyle = cssTone(toneShift(palette.bgA, 0, -24, -16), 0.98);
+  ctx.fillRect(0, 0, width, height);
+
+  const halo = ctx.createRadialGradient(vanishX, vanishY, aperture * 0.45, vanishX, vanishY, outer * 0.95);
+  halo.addColorStop(0, cssTone(toneShift(palette.accents[0], 0, -8, 18), 0.22));
+  halo.addColorStop(0.38, cssTone(toneShift(palette.accents[2], 0, -20, 2), 0.08));
+  halo.addColorStop(1, cssTone(palette.bgA, 0));
+  ctx.fillStyle = halo;
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.lineCap = "round";
+  for (let spoke = 0; spoke < params.spokes; spoke += 1) {
+    const theta = (spoke / params.spokes) * TAU + spin;
+    const outerX = vanishX + Math.cos(theta) * outer;
+    const outerY = vanishY + Math.sin(theta) * outer * params.squash;
+    const sway = Math.sin(spoke * 0.7 + spin * 1.4) * outer * params.wobble * 0.18;
+    const controlX = vanishX + Math.cos(theta + Math.PI * 0.5) * sway;
+    const controlY = vanishY + Math.sin(theta + Math.PI * 0.5) * sway * params.squash;
+
+    ctx.strokeStyle = cssTone(
+      toneShift(palette.accents[spoke % palette.accents.length], 0, -16, -6),
+      0.12
+    );
+    ctx.lineWidth = params.lineWidth * 0.72;
+    ctx.beginPath();
+    ctx.moveTo(vanishX, vanishY);
+    ctx.quadraticCurveTo(controlX, controlY, outerX, outerY);
+    ctx.stroke();
+  }
+
+  const slices = [];
+  for (let index = 0; index < params.slices; index += 1) {
+    const depth = ((index / params.slices) + flowTurns) % 1;
+    slices.push({ index, depth });
+  }
+  slices.sort((a, b) => a.depth - b.depth);
+
+  for (const slice of slices) {
+    const depthScale = Math.pow(slice.depth, params.depthCurve);
+    const radiusX = aperture + (outer - aperture) * depthScale;
+    const radiusY = aperture * params.squash + (outer * params.squash - aperture * params.squash) * depthScale;
+    const shimmer = 1 + Math.sin(slice.index * 0.9 + spin * 1.7) * params.wobble * 0.35;
+    const tone = palette.accents[slice.index % palette.accents.length];
+    const alpha = 0.18 + depthScale * 0.3;
+
+    ctx.beginPath();
+    for (let step = 0; step <= 120; step += 1) {
+      const t = step / 120;
+      const theta = t * TAU;
+      const ripple =
+        1 +
+        Math.sin(theta * 4 + slice.index * 0.65 - spin * 1.3) * params.ripple +
+        Math.cos(theta * 2 - slice.index * 0.4 + spin * 0.8) * params.ripple * 0.55;
+      const x = vanishX + Math.cos(theta) * radiusX * ripple * shimmer;
+      const y = vanishY + Math.sin(theta) * radiusY * ripple;
+      if (step === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    }
+    ctx.closePath();
+    ctx.strokeStyle = cssTone(toneShift(tone, 0, -8, 12), alpha);
+    ctx.lineWidth = params.lineWidth * (0.7 + depthScale * 1.35);
+    ctx.stroke();
+  }
+
+  const throat = ctx.createRadialGradient(vanishX, vanishY, 0, vanishX, vanishY, aperture * 2.8);
+  throat.addColorStop(0, "rgba(0, 0, 0, 0.96)");
+  throat.addColorStop(0.42, "rgba(8, 10, 14, 0.88)");
+  throat.addColorStop(1, "rgba(8, 10, 14, 0)");
+  ctx.fillStyle = throat;
+  ctx.beginPath();
+  ctx.ellipse(vanishX, vanishY, aperture * 2.3, aperture * 2.3 * params.squash, 0, 0, TAU);
+  ctx.fill();
 }
 
 function drawHeringWarp(ctx, width, height, params, palette, time) {
