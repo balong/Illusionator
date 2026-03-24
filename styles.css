@@ -731,6 +731,7 @@ output {
 .mode-btn,
 .composer-button-row button,
 .saved-custom-item button,
+.layer-order-btn,
 .layer-remove-btn,
 .element-card {
   appearance: none;
@@ -770,12 +771,13 @@ output {
 
 .composer-button-row {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 138px), 1fr));
   gap: 0.55rem;
 }
 
 .composer-button-row button,
 .saved-custom-item button,
+.layer-order-btn,
 .layer-remove-btn {
   padding: 0.8rem 0.95rem;
   cursor: pointer;
@@ -804,6 +806,7 @@ output {
 
 .subsection-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
   gap: 0.8rem;
@@ -877,6 +880,7 @@ output {
 
 .element-card:hover,
 .saved-custom-item button:hover,
+.layer-order-btn:hover,
 .layer-remove-btn:hover,
 .mode-btn:hover,
 .composer-button-row button:hover {
@@ -923,7 +927,7 @@ output {
 
 .saved-custom-actions {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 132px), 1fr));
   gap: 0.45rem;
 }
 
@@ -933,6 +937,7 @@ output {
 
 .saved-custom-meta {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 1rem;
   color: var(--ink-2);
@@ -956,6 +961,7 @@ output {
 
 .layer-card-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: start;
   justify-content: space-between;
   gap: 0.75rem;
@@ -964,6 +970,30 @@ output {
 .layer-card-meta {
   display: grid;
   gap: 0.2rem;
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.layer-card-actions {
+  display: grid;
+  gap: 0.45rem;
+  justify-items: stretch;
+  flex: 1 1 240px;
+  min-width: min(100%, 240px);
+  width: 100%;
+}
+
+.layer-order-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 104px), 1fr));
+  gap: 0.4rem;
+  width: 100%;
+}
+
+.layer-order-btn,
+.layer-remove-btn {
+  min-width: 0;
+  text-align: center;
 }
 
 .layer-controls {
@@ -979,12 +1009,22 @@ output {
   gap: 0.3rem;
 }
 
+.layer-order-btn:disabled,
+.layer-remove-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  transform: none;
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: var(--inner-glow);
+}
+
 .field-stack.color-field {
   gap: 0.3rem;
 }
 
 .field-label-row {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 0.7rem;
   align-items: baseline;

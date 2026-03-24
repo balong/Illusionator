@@ -337,6 +337,7 @@ const researchPrinciples = [
     mechanism:
       "A warped checker lattice swells and relaxes across the whole frame, making rigid tiles feel inflated and unstable.",
     fullScreenMotion: true,
+    defaultSpeed: 1.25,
     alphaRange: [0.38, 0.68],
     preferredBlends: ["soft-light", "overlay", "multiply", "exclusion"],
     scaleRange: [1.08, 1.28],
@@ -347,7 +348,7 @@ const researchPrinciples = [
       cols: rng.int(8, 14 + Math.floor(options.complexity / 3)),
       bulge: rng.float(0.18, 0.42),
       twist: rng.float(0.05, 0.18),
-      drift: rng.float(0.05, 0.2 + options.motion * 0.04),
+      drift: rng.float(0.1, 0.3 + options.motion * 0.05),
       tilt: rng.float(-0.22, 0.22),
       seam: rng.float(0.04, 0.12),
     }),
@@ -540,7 +541,7 @@ customElementTypes = researchPrinciples.map((profile) => ({
   id: profile.id,
   name: profile.name,
   description: profile.mechanism,
-  defaultSpeed: profile.fullScreenMotion ? 1 : profile.fixationTarget ? 0.45 : 0.7,
+  defaultSpeed: profile.defaultSpeed ?? (profile.fullScreenMotion ? 1 : profile.fixationTarget ? 0.45 : 0.7),
   buildParams(rng, options) {
     return cloneJson(profile.sample(rng, options));
   },
@@ -560,6 +561,20 @@ const blendModes = [
   "overlay",
   "exclusion",
 ];
+const composerBlendModes = [
+  { value: "source-over", label: "Normal" },
+  { value: "screen", label: "Screen" },
+  { value: "lighten", label: "Lighten" },
+  { value: "overlay", label: "Overlay" },
+  { value: "soft-light", label: "Soft Light" },
+  { value: "hard-light", label: "Hard Light" },
+  { value: "multiply", label: "Multiply" },
+  { value: "darken", label: "Darken" },
+  { value: "difference", label: "Difference" },
+  { value: "exclusion", label: "Exclusion" },
+  { value: "lighter", label: "Additive" },
+];
+const composerBlendModeValues = new Set(composerBlendModes.map((mode) => mode.value));
 let activeRenderMotion = null;
 
 function clamp(value, min, max) {
@@ -1111,6 +1126,20 @@ function getCustomSchemeOptionsMarkup(selectedId, includeGlobal = false) {
   return options.join("");
 }
 
+function normalizeCustomBlendMode(value) {
+  return composerBlendModeValues.has(value) ? value : "source-over";
+}
+
+function getComposerBlendOptionsMarkup(selectedBlend = "source-over") {
+  const normalized = normalizeCustomBlendMode(selectedBlend);
+  return composerBlendModes
+    .map(
+      (mode) =>
+        `<option value="${mode.value}" ${mode.value === normalized ? "selected" : ""}>${mode.label}</option>`
+    )
+    .join("");
+}
+
 function makeCustomLayer(typeId = customElementTypes[0].id) {
   const element = customElementById[typeId] || customElementTypes[0];
   const rng = new SeedRng(`custom-${element.id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
@@ -1124,6 +1153,7 @@ function makeCustomLayer(typeId = customElementTypes[0].id) {
     rotation: 0,
     speed: element.defaultSpeed,
     opacity: 0.86,
+    blend: "source-over",
     overrideScheme: false,
     schemeId: "",
     useCustomColors: false,
@@ -1159,6 +1189,7 @@ function sanitizeCustomLayer(layer) {
   const rotation = Number(layer.rotation);
   const speed = Number(layer.speed);
   const opacity = Number(layer.opacity);
+  const blend = normalizeCustomBlendMode(layer.blend);
   const fallbackScheme = getCustomScheme(layer.schemeId);
   const customColors = Array.isArray(layer.customColors)
     ? layer.customColors.slice(0, 4).map((color, index) => (isHexColor(color) ? color : fallbackScheme.colors[index] || customColorSchemes[0].colors[index]))
@@ -1176,6 +1207,7 @@ function sanitizeCustomLayer(layer) {
     rotation: clamp(Number.isFinite(rotation) ? rotation : 0, -180, 180),
     speed: clamp(Number.isFinite(speed) ? speed : 0, -3, 3),
     opacity: clamp(Number.isFinite(opacity) ? opacity : 0.86, 0, 1),
+    blend,
     overrideScheme: Boolean(layer.overrideScheme),
     schemeId:
       typeof layer.schemeId === "string" && customSchemeById[layer.schemeId] ? layer.schemeId : "",
@@ -2281,6 +2313,7 @@ function renderLayerList() {
   displayLayers.forEach((layer, displayIndex) => {
     const actualIndex = layers.length - 1 - displayIndex;
     const isTopLayer = actualIndex === layers.length - 1;
+    const isBottomLayer = actualIndex === 0;
     const element = customElementById[layer.typeId];
     const article = document.createElement("article");
     article.className = `layer-card${isTopLayer ? " top-layer" : ""}`;
@@ -2289,9 +2322,15 @@ function renderLayerList() {
       <div class="layer-card-head">
         <div class="layer-card-meta">
           <strong>${element.name}</strong>
-          <span>${isTopLayer ? "Top Layer" : `Layer ${actualIndex + 1}`}</span>
+          <span>${isTopLayer ? "Top Layer" : isBottomLayer ? "Base Layer" : `Layer ${actualIndex + 1}`}</span>
         </div>
-        <button type="button" class="layer-remove-btn" data-remove-layer="${layer.id}">Remove</button>
+        <div class="layer-card-actions">
+          <div class="layer-order-controls">
+            <button type="button" class="layer-order-btn" data-move-layer="${layer.id}" data-move-direction="up" ${isTopLayer ? "disabled" : ""}>Move Up</button>
+            <button type="button" class="layer-order-btn" data-move-layer="${layer.id}" data-move-direction="down" ${isBottomLayer ? "disabled" : ""}>Move Down</button>
+          </div>
+          <button type="button" class="layer-remove-btn" data-remove-layer="${layer.id}">Remove</button>
+        </div>
       </div>
       <div class="field-grid layer-controls">
         ${renderLayerRangeField(layer, "x", "Position X", -50, 50, 1)}
@@ -2300,6 +2339,12 @@ function renderLayerList() {
         ${renderLayerRangeField(layer, "rotation", "Rotation", -180, 180, 1)}
         ${renderLayerRangeField(layer, "speed", "Speed", -3, 3, 0.1)}
         ${renderLayerRangeField(layer, "opacity", "Opacity", 0, 1, 0.01)}
+        <label class="field-stack">
+          <span>Blend Mode</span>
+          <select class="select-input" data-layer-id="${layer.id}" data-layer-property="blend">
+            ${getComposerBlendOptionsMarkup(layer.blend)}
+          </select>
+        </label>
         <label class="field-stack">
           <span>Override Scheme</span>
           <span class="toggle-row">
@@ -2477,6 +2522,11 @@ function handleLayerEditorInput(event) {
 
     if (property === "schemeId") {
       layer.schemeId = target.value;
+      return;
+    }
+
+    if (property === "blend") {
+      layer.blend = normalizeCustomBlendMode(target.value);
       return;
     }
 
@@ -3164,6 +3214,7 @@ function renderCustomComposition(composition, targetCanvas, now = 0, staticFrame
       const scheme = getEffectiveLayerScheme(layer, baseScheme);
       ctx.save();
       ctx.globalAlpha = layer.opacity;
+      ctx.globalCompositeOperation = normalizeCustomBlendMode(layer.blend);
       ctx.translate(
         compositionWidth * (0.5 + layer.x / 100),
         compositionHeight * (0.5 + layer.y / 100)
@@ -5657,6 +5708,33 @@ function bindEvents() {
   });
 
   layerListEl.addEventListener("click", (event) => {
+    const moveButton = event.target instanceof Element ? event.target.closest("[data-move-layer]") : null;
+    if (moveButton) {
+      const layerId = moveButton.dataset.moveLayer;
+      const direction = moveButton.dataset.moveDirection === "up" ? 1 : -1;
+
+      updateCurrentCustom((current) => {
+        const index = current.layers.findIndex((layer) => layer.id === layerId);
+        if (index === -1) {
+          return;
+        }
+
+        const targetIndex = clamp(index + direction, 0, current.layers.length - 1);
+        if (targetIndex === index) {
+          return;
+        }
+
+        const [layer] = current.layers.splice(index, 1);
+        current.layers.splice(targetIndex, 0, layer);
+      }, {
+        syncControls: false,
+        renderSaved: false,
+      });
+
+      setCustomStatus(`Layer moved ${direction > 0 ? "up" : "down"} in the stack.`);
+      return;
+    }
+
     const button = event.target instanceof Element ? event.target.closest("[data-remove-layer]") : null;
     if (!button) {
       return;
