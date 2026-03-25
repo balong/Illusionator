@@ -335,6 +335,7 @@ const researchPrinciples = [
       dotRadius: rng.float(1.4, 6.2),
       jitter: rng.float(0.05, 0.38),
       flickerSpeed: rng.float(0.3, 1.5),
+      angle: rng.float(-0.42, 0.42),
     }),
     draw: drawScintillatingGrid,
   },
@@ -477,6 +478,10 @@ const researchPrinciples = [
     mechanism:
       "Perspective rings and converging spokes cycle through a false tunnel that reads as deep, fast, and immediate.",
     fullScreenMotion: true,
+    alphaRange: [0.5, 1],
+    scaleRange: [1, 1],
+    rotationRange: [0, 0],
+    offsetRange: [0, 0],
     sample: (rng, options) => ({
       slices: rng.int(16, 30 + Math.floor(options.complexity / 2)),
       spokes: rng.int(18, 42 + options.complexity),
@@ -484,7 +489,8 @@ const researchPrinciples = [
       squash: rng.float(0.54, 0.84),
       flow: rng.float(0.05, 0.16 + options.motion * 0.025),
       spin: rng.float(0.02, 0.08 + options.motion * 0.012) * rng.sign(),
-      lineWidth: rng.float(0.9, 2.2),
+      lineWidth: rng.float(1.35, 4.6),
+      inkOpacity: rng.float(0.95, 1.9),
       depthCurve: rng.float(1.45, 2.3),
       ripple: rng.float(0.012, 0.055),
       wobble: rng.float(0.03, 0.1),
@@ -1000,7 +1006,28 @@ function sanitizeLayers(layers) {
     return [];
   }
 
-  return layers.filter((layer) => layer?.principleId && researchById[layer.principleId]);
+  return layers
+    .filter((layer) => layer?.principleId && researchById[layer.principleId])
+    .map((layer) => {
+      const profile = researchById[layer.principleId];
+      const rotationRange = Array.isArray(profile.rotationRange) ? profile.rotationRange : [-0.3, 0.3];
+      const scaleRange = Array.isArray(profile.scaleRange) ? profile.scaleRange : [0.8, 1.16];
+      const offsetRange = Array.isArray(profile.offsetRange) ? profile.offsetRange : [-0.12, 0.12];
+      const alpha = Number(layer.alpha);
+      const rotation = Number(layer.rotation);
+      const scale = Number(layer.scale);
+      const offsetX = Number(layer.offsetX);
+      const offsetY = Number(layer.offsetY);
+
+      return {
+        ...layer,
+        alpha: clamp(Number.isFinite(alpha) ? alpha : 0.86, 0.25, 1),
+        rotation: clamp(Number.isFinite(rotation) ? rotation : 0, rotationRange[0], rotationRange[1]),
+        scale: clamp(Number.isFinite(scale) ? scale : 1, scaleRange[0], scaleRange[1]),
+        offsetX: clamp(Number.isFinite(offsetX) ? offsetX : 0, offsetRange[0], offsetRange[1]),
+        offsetY: clamp(Number.isFinite(offsetY) ? offsetY : 0, offsetRange[0], offsetRange[1]),
+      };
+    });
 }
 
 function normalizeEnabledPrinciples(ids) {
@@ -4005,45 +4032,50 @@ function drawScintillatingGrid(ctx, width, height, params, palette, time, illusi
   const maxRows = Math.max(2, Math.floor(height / minGap) + 1);
   const cols = clamp(Math.max(2, Math.round(params.cols)), 2, maxCols);
   const rows = clamp(Math.max(2, Math.round(params.rows)), 2, maxRows);
-  const gapX = width / Math.max(1, cols - 1);
-  const gapY = height / Math.max(1, rows - 1);
+  const span = Math.hypot(width, height);
+  const gapX = (span * 2) / Math.max(1, cols - 1);
+  const gapY = (span * 2) / Math.max(1, rows - 1);
   const dotPhase = getMotionAngle(params.flickerSpeed * (0.6 + illusion.motionStrength));
   const effectiveLineWidth = Math.max(0.8, Math.min(params.lineWidth, Math.min(gapX, gapY) * 0.22));
   const effectiveDotRadius = Math.max(1.2, Math.min(params.dotRadius, Math.min(gapX, gapY) * 0.34));
+  const angle = params.angle || 0;
 
   ctx.fillStyle = cssTone(toneShift(palette.bgA, 0, -18, -8), 0.82);
   ctx.fillRect(0, 0, width, height);
 
+  ctx.save();
+  ctx.translate(width * 0.5, height * 0.5);
+  ctx.rotate(angle);
   ctx.strokeStyle = cssTone(palette.ink, 0.75);
   ctx.lineWidth = effectiveLineWidth;
 
   forEachVisibleLinearIndex(
-    { viewportStart: 0, viewportEnd: width, stepPx: gapX, offsetPx: 0, overscanSteps: 0 },
+    { viewportStart: -span, viewportEnd: span, stepPx: gapX, offsetPx: -span, overscanSteps: 0 },
     (_, x) => {
       ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, height);
+      ctx.moveTo(x, -span);
+      ctx.lineTo(x, span);
       ctx.stroke();
     }
   );
 
   forEachVisibleLinearIndex(
-    { viewportStart: 0, viewportEnd: height, stepPx: gapY, offsetPx: 0, overscanSteps: 0 },
+    { viewportStart: -span, viewportEnd: span, stepPx: gapY, offsetPx: -span, overscanSteps: 0 },
     (_, y) => {
       ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
+      ctx.moveTo(-span, y);
+      ctx.lineTo(span, y);
       ctx.stroke();
     }
   );
 
   let visibleCount = 0;
   forEachVisibleLinearIndex(
-    { viewportStart: 0, viewportEnd: height, stepPx: gapY, offsetPx: 0, overscanSteps: 0 },
+    { viewportStart: -span, viewportEnd: span, stepPx: gapY, offsetPx: -span, overscanSteps: 0 },
     (rowIndex, y) => {
       const r = rowIndex;
       forEachVisibleLinearIndex(
-        { viewportStart: 0, viewportEnd: width, stepPx: gapX, offsetPx: 0, overscanSteps: 0 },
+        { viewportStart: -span, viewportEnd: span, stepPx: gapX, offsetPx: -span, overscanSteps: 0 },
         (colIndex, x) => {
           const c = colIndex;
           const pulse = 0.45 + 0.55 * Math.sin((r + c) * 0.42 + dotPhase);
@@ -4063,6 +4095,7 @@ function drawScintillatingGrid(ctx, width, height, params, palette, time, illusi
     }
   );
 
+  ctx.restore();
   recordVisibleInstances("scintillating_grid", visibleCount);
 }
 
@@ -4816,6 +4849,7 @@ function drawRippleTunnelMesh(ctx, width, height, params, palette, time) {
   const minDim = Math.min(width, height);
   const outer = Math.hypot(width, height) * 0.68;
   const aperture = minDim * params.aperture;
+  const inkOpacity = clamp(Number.isFinite(params.inkOpacity) ? params.inkOpacity : 1, 0.6, 2.2);
   const flowTurns = ((getMotionAngle(params.flow) / TAU) % 1 + 1) % 1;
   const spin = getMotionAngle(params.spin);
   const drift = getMotionAngle(params.vanishDrift);
@@ -4826,8 +4860,8 @@ function drawRippleTunnelMesh(ctx, width, height, params, palette, time) {
   ctx.fillRect(0, 0, width, height);
 
   const halo = ctx.createRadialGradient(vanishX, vanishY, aperture * 0.45, vanishX, vanishY, outer * 0.95);
-  halo.addColorStop(0, cssTone(toneShift(palette.accents[0], 0, -8, 18), 0.22));
-  halo.addColorStop(0.38, cssTone(toneShift(palette.accents[2], 0, -20, 2), 0.08));
+  halo.addColorStop(0, cssTone(toneShift(palette.accents[0], 0, -8, 18), clamp(0.22 * inkOpacity, 0, 0.52)));
+  halo.addColorStop(0.38, cssTone(toneShift(palette.accents[2], 0, -20, 2), clamp(0.08 * inkOpacity, 0, 0.22)));
   halo.addColorStop(1, cssTone(palette.bgA, 0));
   ctx.fillStyle = halo;
   ctx.fillRect(0, 0, width, height);
@@ -4843,9 +4877,9 @@ function drawRippleTunnelMesh(ctx, width, height, params, palette, time) {
 
     ctx.strokeStyle = cssTone(
       toneShift(palette.accents[spoke % palette.accents.length], 0, -16, -6),
-      0.12
+      clamp(0.12 * inkOpacity, 0, 0.28)
     );
-    ctx.lineWidth = params.lineWidth * 0.72;
+    ctx.lineWidth = params.lineWidth * 0.9;
     ctx.beginPath();
     ctx.moveTo(vanishX, vanishY);
     ctx.quadraticCurveTo(controlX, controlY, outerX, outerY);
@@ -4861,7 +4895,7 @@ function drawRippleTunnelMesh(ctx, width, height, params, palette, time) {
     const radiusY = aperture * params.squash + (outer * params.squash - aperture * params.squash) * depthScale;
     const shimmer = 1 + Math.sin(index * 0.9 + spin * 1.7) * params.wobble * 0.35;
     const tone = palette.accents[index % palette.accents.length];
-    const alpha = 0.18 + depthScale * 0.3;
+    const alpha = clamp((0.18 + depthScale * 0.3) * inkOpacity, 0, 0.96);
 
     ctx.beginPath();
     for (let step = 0; step <= 120; step += 1) {
@@ -4881,7 +4915,7 @@ function drawRippleTunnelMesh(ctx, width, height, params, palette, time) {
     }
     ctx.closePath();
     ctx.strokeStyle = cssTone(toneShift(tone, 0, -8, 12), alpha);
-    ctx.lineWidth = params.lineWidth * (0.7 + depthScale * 1.35);
+    ctx.lineWidth = params.lineWidth * (0.95 + depthScale * 1.6);
     ctx.stroke();
   }
 
