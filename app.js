@@ -303,11 +303,15 @@ const researchPrinciples = [
     name: "Zollner Orientation Conflict",
     mechanism:
       "Conflicting local line cues bias global parallel judgement and skew perceived orientation.",
+    alphaRange: [0.72, 0.94],
+    scaleRange: [1, 1],
+    rotationRange: [0, 0],
+    offsetRange: [0, 0],
     sample: (rng, options) => ({
-      lineCount: rng.int(8, 20 + options.complexity),
+      lineCount: rng.int(10, 26 + options.complexity * 2),
       gapJitter: rng.float(0.08, 0.35),
-      tickLength: rng.float(7, 18 + options.complexity * 1.7),
-      tickGap: rng.float(14, 32),
+      tickLength: rng.float(5, 20 + options.complexity * 1.9),
+      tickGap: rng.float(8, 34),
       tickAngle: rng.float(0.3, 0.95),
       slope: rng.float(-0.12, 0.12),
       stroke: rng.float(0.9, 2.6),
@@ -320,11 +324,15 @@ const researchPrinciples = [
     mechanism:
       "Peripheral contrast sampling and fixation shifts produce phantom flicker at intersections.",
     fixationTarget: true,
+    alphaRange: [0.72, 0.94],
+    scaleRange: [1, 1],
+    rotationRange: [0, 0],
+    offsetRange: [0, 0],
     sample: (rng, options) => ({
-      rows: rng.int(6, 16 + Math.floor(options.complexity / 2)),
-      cols: rng.int(6, 18 + Math.floor(options.complexity / 2)),
-      lineWidth: rng.float(1.4, 4.6),
-      dotRadius: rng.float(2.4, 7.2),
+      rows: rng.int(10, 28 + options.complexity * 2),
+      cols: rng.int(10, 36 + options.complexity * 2),
+      lineWidth: rng.float(1.1, 4.2),
+      dotRadius: rng.float(1.4, 6.2),
       jitter: rng.float(0.05, 0.38),
       flickerSpeed: rng.float(0.3, 1.5),
     }),
@@ -3850,40 +3858,67 @@ function drawCafeWall(ctx, width, height, params, palette, time) {
 }
 
 function drawZollnerLines(ctx, width, height, params, palette) {
-  const margin = width * 0.07;
-  const usableHeight = height * 0.86;
-  const lineGap = usableHeight / Math.max(3, params.lineCount - 1);
+  const lineCount = Math.max(4, Math.round(params.lineCount));
+  const usableHeight = height * 1.22;
+  const lineGap = usableHeight / Math.max(3, lineCount - 1);
+  const topOffset = -height * 0.11;
+  const bleed = Math.max(width, height) * 0.16;
+  const lineSpan = width + bleed * 2;
+  const minTickGap = Math.max(8, Math.min(width, height) * 0.012);
+  const tickGap = Math.max(minTickGap, params.tickGap);
+  const tickLength = Math.max(4, Math.min(params.tickLength, lineGap * 0.78));
+  const baseStroke = Math.max(0.8, Math.min(params.stroke, lineGap * 0.18));
+  let visibleCount = 0;
 
   ctx.strokeStyle = cssTone(palette.ink, 0.8);
-  ctx.lineWidth = params.stroke;
+  ctx.lineWidth = baseStroke;
 
-  for (let i = 0; i < params.lineCount; i += 1) {
-    const jitter = (Math.sin(i * 1.33) * params.gapJitter * lineGap) / 2;
-    const y = height * 0.08 + i * lineGap + jitter;
-    const yEnd = y + params.slope * width;
+  forEachVisibleLinearIndex(
+    { viewportStart: -bleed, viewportEnd: height + bleed, stepPx: lineGap, offsetPx: topOffset, overscanSteps: 1 },
+    (rowIndex, yBase) => {
+      const jitter = Math.sin(rowIndex * 1.33) * params.gapJitter * lineGap * 0.5;
+      const y = yBase + jitter;
+      const yEnd = y + params.slope * lineSpan;
+      const lineStartX = -bleed;
+      const lineEndX = width + bleed;
 
-    ctx.beginPath();
-    ctx.moveTo(margin, y);
-    ctx.lineTo(width - margin, yEnd);
-    ctx.stroke();
-
-    for (let x = margin; x < width - margin; x += params.tickGap) {
-      const baseY = y + ((x - margin) / (width - margin)) * (yEnd - y);
-      const toggle = ((i + Math.floor(x / params.tickGap)) % 2 === 0 ? 1 : -1) * params.tickAngle;
-
-      ctx.strokeStyle = cssTone(palette.accents[(i + Math.floor(x)) % palette.accents.length], 0.7);
+      ctx.strokeStyle = cssTone(palette.ink, 0.8);
+      ctx.lineWidth = baseStroke;
       ctx.beginPath();
-      ctx.moveTo(
-        x - Math.cos(toggle) * params.tickLength * 0.5,
-        baseY - Math.sin(toggle) * params.tickLength * 0.5
-      );
-      ctx.lineTo(
-        x + Math.cos(toggle) * params.tickLength * 0.5,
-        baseY + Math.sin(toggle) * params.tickLength * 0.5
-      );
+      ctx.moveTo(lineStartX, y);
+      ctx.lineTo(lineEndX, yEnd);
       ctx.stroke();
+      visibleCount += 1;
+
+      forEachVisibleLinearIndex(
+        { viewportStart: -bleed, viewportEnd: width + bleed, stepPx: tickGap, offsetPx: -bleed, overscanSteps: 0 },
+        (tickIndex, x) => {
+          const t = lineSpan > 0.000001 ? (x - lineStartX) / lineSpan : 0;
+          const baseY = y + (yEnd - y) * t;
+          const toggle = ((rowIndex + tickIndex) % 2 === 0 ? 1 : -1) * params.tickAngle;
+
+          ctx.strokeStyle = cssTone(
+            palette.accents[Math.abs(rowIndex + tickIndex) % palette.accents.length],
+            0.7
+          );
+          ctx.lineWidth = Math.max(0.8, baseStroke * 0.92);
+          ctx.beginPath();
+          ctx.moveTo(
+            x - Math.cos(toggle) * tickLength * 0.5,
+            baseY - Math.sin(toggle) * tickLength * 0.5
+          );
+          ctx.lineTo(
+            x + Math.cos(toggle) * tickLength * 0.5,
+            baseY + Math.sin(toggle) * tickLength * 0.5
+          );
+          ctx.stroke();
+          visibleCount += 1;
+        }
+      );
     }
-  }
+  );
+
+  recordVisibleInstances("zollner_lines", visibleCount);
 }
 
 function drawBulgingCheckerboard(ctx, width, height, params, palette, time) {
@@ -3965,45 +4000,52 @@ function drawBulgingCheckerboard(ctx, width, height, params, palette, time) {
 }
 
 function drawScintillatingGrid(ctx, width, height, params, palette, time, illusion) {
-  const gapX = width / (params.cols + 1);
-  const gapY = height / (params.rows + 1);
+  const minGap = Math.max(10, Math.min(width, height) * 0.012);
+  const maxCols = Math.max(2, Math.floor(width / minGap) + 1);
+  const maxRows = Math.max(2, Math.floor(height / minGap) + 1);
+  const cols = clamp(Math.max(2, Math.round(params.cols)), 2, maxCols);
+  const rows = clamp(Math.max(2, Math.round(params.rows)), 2, maxRows);
+  const gapX = width / Math.max(1, cols - 1);
+  const gapY = height / Math.max(1, rows - 1);
   const dotPhase = getMotionAngle(params.flickerSpeed * (0.6 + illusion.motionStrength));
+  const effectiveLineWidth = Math.max(0.8, Math.min(params.lineWidth, Math.min(gapX, gapY) * 0.22));
+  const effectiveDotRadius = Math.max(1.2, Math.min(params.dotRadius, Math.min(gapX, gapY) * 0.34));
 
   ctx.fillStyle = cssTone(toneShift(palette.bgA, 0, -18, -8), 0.82);
   ctx.fillRect(0, 0, width, height);
 
   ctx.strokeStyle = cssTone(palette.ink, 0.75);
-  ctx.lineWidth = params.lineWidth;
+  ctx.lineWidth = effectiveLineWidth;
 
   forEachVisibleLinearIndex(
-    { viewportStart: gapX, viewportEnd: width - gapX, stepPx: gapX, offsetPx: gapX, overscanSteps: 0 },
+    { viewportStart: 0, viewportEnd: width, stepPx: gapX, offsetPx: 0, overscanSteps: 0 },
     (_, x) => {
       ctx.beginPath();
-      ctx.moveTo(x, gapY * 0.8);
-      ctx.lineTo(x, height - gapY * 0.8);
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
       ctx.stroke();
     }
   );
 
   forEachVisibleLinearIndex(
-    { viewportStart: gapY, viewportEnd: height - gapY, stepPx: gapY, offsetPx: gapY, overscanSteps: 0 },
+    { viewportStart: 0, viewportEnd: height, stepPx: gapY, offsetPx: 0, overscanSteps: 0 },
     (_, y) => {
       ctx.beginPath();
-      ctx.moveTo(gapX * 0.8, y);
-      ctx.lineTo(width - gapX * 0.8, y);
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
       ctx.stroke();
     }
   );
 
   let visibleCount = 0;
   forEachVisibleLinearIndex(
-    { viewportStart: gapY, viewportEnd: height - gapY, stepPx: gapY, offsetPx: gapY, overscanSteps: 0 },
+    { viewportStart: 0, viewportEnd: height, stepPx: gapY, offsetPx: 0, overscanSteps: 0 },
     (rowIndex, y) => {
-      const r = rowIndex + 1;
+      const r = rowIndex;
       forEachVisibleLinearIndex(
-        { viewportStart: gapX, viewportEnd: width - gapX, stepPx: gapX, offsetPx: gapX, overscanSteps: 0 },
+        { viewportStart: 0, viewportEnd: width, stepPx: gapX, offsetPx: 0, overscanSteps: 0 },
         (colIndex, x) => {
-          const c = colIndex + 1;
+          const c = colIndex;
           const pulse = 0.45 + 0.55 * Math.sin((r + c) * 0.42 + dotPhase);
           const jitterX = Math.sin((r + c) * 0.9) * params.jitter * gapX * 0.09;
           const jitterY = Math.cos((r - c) * 0.7) * params.jitter * gapY * 0.09;
@@ -4013,7 +4055,7 @@ function drawScintillatingGrid(ctx, width, height, params, palette, time, illusi
             0.35 + pulse * 0.52
           );
           ctx.beginPath();
-          ctx.arc(x + jitterX, y + jitterY, params.dotRadius * (0.8 + pulse * 0.28), 0, TAU);
+          ctx.arc(x + jitterX, y + jitterY, effectiveDotRadius * (0.8 + pulse * 0.28), 0, TAU);
           ctx.fill();
           visibleCount += 1;
         }
@@ -4951,8 +4993,11 @@ function drawPonzoCorridor(ctx, width, height, params, palette, time) {
   const centerX = width * 0.5;
   const bottomY = height * 0.96;
   const spread = width * params.railSpread;
-  const railStep = spread > 0.000001 ? (params.railCount > 1 ? (spread * 2) / (params.railCount - 1) : spread * 2) : width + 1;
-  const railOffset = centerX - spread;
+  const bottomRailSpread = Math.max(width * 0.58, spread * 2.35);
+  const vanishSpread = Math.max(width * 0.012, spread * 0.04);
+  const railBaseY = height + height * 0.12;
+  const vanishY = horizonY - height * 0.06;
+  const vanishX = centerX + Math.sin(getMotionAngle(params.drift * 0.42)) * width * 0.01;
   const barTravel = (bottomY - horizonY) * 0.88;
   const barStep = barTravel > 0.000001 ? (params.barCount > 1 ? barTravel / (params.barCount - 1) : barTravel) : height + 1;
   const barOffset = bottomY - barTravel;
@@ -4965,21 +5010,23 @@ function drawPonzoCorridor(ctx, width, height, params, palette, time) {
   ctx.lineCap = "round";
   ctx.lineWidth = Math.max(1, Math.min(width, height) * 0.0025);
 
-  forEachVisibleLinearIndex(
-    { viewportStart: centerX - spread, viewportEnd: centerX + spread, stepPx: railStep, offsetPx: railOffset, overscanSteps: 1 },
-    (index, startX) => {
-      const p = spread > 0.000001 ? (startX - centerX) / (spread * 2) : 0;
-      const endX = centerX + p * spread * 0.15;
-      const wobble = Math.sin(index * 0.52 + railPhase) * width * 0.006;
+  for (let railIndex = 0; railIndex < params.railCount; railIndex += 1) {
+    const t = params.railCount > 1 ? railIndex / (params.railCount - 1) : 0.5;
+    const p = t - 0.5;
+    const wobble = Math.sin(railIndex * 0.52 + railPhase) * width * 0.006;
+    const startX = centerX + p * bottomRailSpread * 2 + wobble;
+    const endX = vanishX + p * vanishSpread * 2 + wobble * 0.14;
 
-      ctx.beginPath();
-      ctx.moveTo(startX, bottomY);
-      ctx.lineTo(endX + wobble, horizonY);
-      ctx.strokeStyle = cssTone(toneShift(palette.accents[Math.abs(index) % palette.accents.length], 0, -14, -8), 0.46);
-      ctx.stroke();
-      visibleCount += 1;
-    }
-  );
+    ctx.beginPath();
+    ctx.moveTo(startX, railBaseY);
+    ctx.lineTo(endX, vanishY);
+    ctx.strokeStyle = cssTone(
+      toneShift(palette.accents[railIndex % palette.accents.length], 0, -14, -8),
+      0.46
+    );
+    ctx.stroke();
+    visibleCount += 1;
+  }
 
   forEachVisibleLinearIndex(
     { viewportStart: horizonY, viewportEnd: bottomY, stepPx: barStep, offsetPx: barOffset, overscanSteps: 1 },
