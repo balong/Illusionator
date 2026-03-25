@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Mesmer</title>
-    <link rel="stylesheet" href="./styles.css?v=20260315-loop-export-main" />
+    <link rel="stylesheet" href="./styles.css?v=20260324-layout-mix-controls" />
   </head>
   <body>
     <main id="viewer" class="viewer" aria-label="Optical illusion viewer">
@@ -175,6 +175,44 @@
             <input id="noveltyRange" type="range" min="0" max="100" step="1" value="75" />
           </div>
 
+          <div class="range-block">
+            <div class="slider-row">
+              <span>Subject Layout</span>
+            </div>
+            <p class="range-note">Choose how non-fullscreen subject layers are positioned in generated scenes.</p>
+            <div class="option-check-grid" aria-label="Subject layout modes">
+              <label class="option-check">
+                <input id="layoutModeCenter" type="checkbox" />
+                <span>Centered</span>
+              </label>
+              <label class="option-check">
+                <input id="layoutModeThirds" type="checkbox" />
+                <span>Rule of Thirds</span>
+              </label>
+              <label class="option-check">
+                <input id="layoutModeRandom" type="checkbox" />
+                <span>Random</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="range-block">
+            <div class="slider-row">
+              <span>Stack Offset</span>
+            </div>
+            <p class="range-note">If subject layers share an anchor, let upper layers drift slightly or stay locked together.</p>
+            <div class="option-check-grid" aria-label="Top layer offset modes">
+              <label class="option-check">
+                <input id="topLayerOffsetEnabled" type="checkbox" />
+                <span>Offset Top Layers</span>
+              </label>
+              <label class="option-check">
+                <input id="topLayerOffsetLocked" type="checkbox" />
+                <span>Keep Top Layers Locked</span>
+              </label>
+            </div>
+          </div>
+
         </section>
 
         <section id="composerPanel" class="menu-block mode-panel composer-panel" data-mode-panel="composer" hidden>
@@ -249,6 +287,6 @@
       </div>
     </aside>
 
-    <script src="./app.js?v=20260315-loop-export-main" defer></script>
+    <script src="./app.js?v=20260324-layout-mix-controls" defer></script>
   </body>
 </html>

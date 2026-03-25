@@ -42,6 +42,10 @@ const EXPORT_FPS_PRESETS = {
 const DEFAULT_EXPORT_ASPECT = "16:9";
 const DEFAULT_EXPORT_RESOLUTION = "2160";
 const DEFAULT_EXPORT_FPS = "60";
+const SUBJECT_LAYOUT_MODE_VALUES = ["center", "thirds", "random"];
+const DEFAULT_SUBJECT_LAYOUT_MODES = ["center", "thirds"];
+const TOP_LAYER_OFFSET_MODE_VALUES = ["offset", "locked"];
+const DEFAULT_TOP_LAYER_OFFSET_MODES = ["offset", "locked"];
 const APP_MODE_GENERATOR = "generator";
 const APP_MODE_COMPOSER = "composer";
 const DEFAULT_COMPOSER_MENU_WIDTH = 980;
@@ -66,6 +70,11 @@ const saveBtn = document.getElementById("saveBtn");
 const complexityRange = document.getElementById("complexityRange");
 const motionRange = document.getElementById("motionRange");
 const noveltyRange = document.getElementById("noveltyRange");
+const layoutModeCenterInput = document.getElementById("layoutModeCenter");
+const layoutModeThirdsInput = document.getElementById("layoutModeThirds");
+const layoutModeRandomInput = document.getElementById("layoutModeRandom");
+const topLayerOffsetEnabledInput = document.getElementById("topLayerOffsetEnabled");
+const topLayerOffsetLockedInput = document.getElementById("topLayerOffsetLocked");
 
 const complexityValue = document.getElementById("complexityValue");
 const motionValue = document.getElementById("motionValue");
@@ -120,6 +129,8 @@ const state = {
     motion: 4,
     noveltyBias: 0.75,
     enabledPrinciples: [],
+    subjectLayoutModes: [...DEFAULT_SUBJECT_LAYOUT_MODES],
+    topLayerOffsetModes: [...DEFAULT_TOP_LAYER_OFFSET_MODES],
   },
   discoveries: [],
   preference: {}, // legacy mirror of linear preference weights
@@ -541,6 +552,20 @@ const allPrincipleIds = researchPrinciples.map((item) => item.id);
 const immersiveMotionPrincipleIds = researchPrinciples
   .filter((item) => item.fullScreenMotion)
   .map((item) => item.id);
+const anchoredSubjectPrincipleIds = new Set([
+  "kanizsa_web",
+  "fraser_spiral",
+  "peripheral_drift",
+  "pinna_brelstaff",
+  "ouchi_tiles",
+  "troxler_field",
+]);
+const anchoredRuleOfThirdsPoints = [
+  { x: -1 / 6, y: -1 / 6 },
+  { x: 1 / 6, y: -1 / 6 },
+  { x: -1 / 6, y: 1 / 6 },
+  { x: 1 / 6, y: 1 / 6 },
+];
 customElementTypes = researchPrinciples.map((profile) => ({
   id: profile.id,
   name: profile.name,
@@ -981,6 +1006,28 @@ function normalizeEnabledPrinciples(ids) {
   return normalized.length ? normalized : [...allPrincipleIds];
 }
 
+function normalizeSubjectLayoutModes(modes) {
+  if (!Array.isArray(modes)) {
+    return [...DEFAULT_SUBJECT_LAYOUT_MODES];
+  }
+
+  const normalized = Array.from(
+    new Set(modes.filter((mode) => SUBJECT_LAYOUT_MODE_VALUES.includes(mode)))
+  );
+  return normalized.length ? normalized : [...DEFAULT_SUBJECT_LAYOUT_MODES];
+}
+
+function normalizeTopLayerOffsetModes(modes) {
+  if (!Array.isArray(modes)) {
+    return [...DEFAULT_TOP_LAYER_OFFSET_MODES];
+  }
+
+  const normalized = Array.from(
+    new Set(modes.filter((mode) => TOP_LAYER_OFFSET_MODE_VALUES.includes(mode)))
+  );
+  return normalized.length ? normalized : [...DEFAULT_TOP_LAYER_OFFSET_MODES];
+}
+
 function mergeImmersiveMotionPrinciples(ids) {
   const normalized = normalizeEnabledPrinciples(ids);
   if (!Array.isArray(ids)) {
@@ -1006,6 +1053,48 @@ function mergeImmersiveMotionPrinciples(ids) {
 function getEnabledPrinciples() {
   state.options.enabledPrinciples = normalizeEnabledPrinciples(state.options.enabledPrinciples);
   return state.options.enabledPrinciples;
+}
+
+function setSubjectLayoutMode(mode, enabled) {
+  if (!SUBJECT_LAYOUT_MODE_VALUES.includes(mode)) {
+    return;
+  }
+
+  const current = new Set(normalizeSubjectLayoutModes(state.options.subjectLayoutModes));
+  if (enabled) {
+    current.add(mode);
+  } else {
+    if (current.size === 1 && current.has(mode)) {
+      syncControlReadouts();
+      return;
+    }
+    current.delete(mode);
+  }
+
+  state.options.subjectLayoutModes = normalizeSubjectLayoutModes(Array.from(current));
+  syncControlReadouts();
+  persistState();
+}
+
+function setTopLayerOffsetMode(mode, enabled) {
+  if (!TOP_LAYER_OFFSET_MODE_VALUES.includes(mode)) {
+    return;
+  }
+
+  const current = new Set(normalizeTopLayerOffsetModes(state.options.topLayerOffsetModes));
+  if (enabled) {
+    current.add(mode);
+  } else {
+    if (current.size === 1 && current.has(mode)) {
+      syncControlReadouts();
+      return;
+    }
+    current.delete(mode);
+  }
+
+  state.options.topLayerOffsetModes = normalizeTopLayerOffsetModes(Array.from(current));
+  syncControlReadouts();
+  persistState();
 }
 
 function sigmoid(value) {
@@ -1678,15 +1767,15 @@ function chooseCoveragePrinciple() {
   return targetId;
 }
 
-function normalizeGeneratedLayers(layers) {
-  if (!Array.isArray(layers) || layers.length < 2) {
+function normalizeGeneratedLayers(layers, rng = null) {
+  if (!Array.isArray(layers) || !layers.length) {
     return layers;
   }
 
   const normalized = layers.map((layer) => ({ ...layer }));
   const topIndex = normalized.length - 1;
 
-  if (normalized[topIndex]?.principleId === "bulging_checkerboard") {
+  if (normalized.length > 1 && normalized[topIndex]?.principleId === "bulging_checkerboard") {
     for (let i = topIndex - 1; i >= 0; i -= 1) {
       if (normalized[i]?.principleId !== "bulging_checkerboard") {
         const topLayer = normalized[topIndex];
@@ -1709,6 +1798,64 @@ function normalizeGeneratedLayers(layers) {
     if (!layer.blend || layer.blend === "source-over") {
       layer.blend = isTopLayer ? "soft-light" : "overlay";
     }
+  }
+
+  if (!rng) {
+    return normalized;
+  }
+
+  const anchoredIndices = [];
+  for (let i = 0; i < normalized.length; i += 1) {
+    const layer = normalized[i];
+    const profile = researchById[layer?.principleId];
+    if (!profile || !anchoredSubjectPrincipleIds.has(layer.principleId)) {
+      continue;
+    }
+    anchoredIndices.push(i);
+  }
+
+  if (!anchoredIndices.length) {
+    return normalized;
+  }
+
+  const selectedLayoutModes = normalizeSubjectLayoutModes(state.options.subjectLayoutModes);
+  const selectedTopLayerOffsetModes = normalizeTopLayerOffsetModes(state.options.topLayerOffsetModes);
+  const layoutMode = pick(selectedLayoutModes, rng);
+  const topLayerOffsetMode = pick(selectedTopLayerOffsetModes, rng);
+  const anchor =
+    layoutMode === "center"
+      ? { x: 0, y: 0 }
+      : layoutMode === "thirds"
+        ? pick(anchoredRuleOfThirdsPoints, rng)
+        : {
+            x: rng.float(-0.18, 0.18),
+            y: rng.float(-0.18, 0.18),
+          };
+  const allowTopLayerOffset = topLayerOffsetMode === "offset";
+
+  for (let anchoredOrder = 0; anchoredOrder < anchoredIndices.length; anchoredOrder += 1) {
+    const layerIndex = anchoredIndices[anchoredOrder];
+    const layer = normalized[layerIndex];
+    const profile = researchById[layer.principleId];
+    const offsetRange = Array.isArray(profile?.offsetRange) ? profile.offsetRange : [-0.12, 0.12];
+    const anchorRange = [
+      Math.min(offsetRange[0], -0.18),
+      Math.max(offsetRange[1], 0.18),
+    ];
+    const jitter =
+      allowTopLayerOffset && anchoredOrder > 0
+        ? Math.min(0.032, 0.012 + anchoredOrder * 0.006)
+        : 0;
+    layer.offsetX = clamp(
+      anchor.x + (jitter ? rng.float(-jitter, jitter) : 0),
+      anchorRange[0],
+      anchorRange[1]
+    );
+    layer.offsetY = clamp(
+      anchor.y + (jitter ? rng.float(-jitter, jitter) : 0),
+      anchorRange[0],
+      anchorRange[1]
+    );
   }
 
   return normalized;
@@ -1991,7 +2138,7 @@ function buildIllusion(seed, parentId = null, forcedPrincipleId = null) {
     layers.push(sampleLayer(principleId, rng, state.options));
   }
 
-  const normalizedLayers = normalizeGeneratedLayers(layers);
+  const normalizedLayers = normalizeGeneratedLayers(layers, rng);
   const principles = Array.from(new Set(picked));
   const fixationAid = needsFixationAid(principles) ? makeFixationAid(rng) : null;
 
@@ -2789,6 +2936,23 @@ function syncControlReadouts() {
   complexityValue.textContent = String(state.options.complexity);
   motionValue.textContent = String(state.options.motion);
   noveltyValue.textContent = `${Math.round(state.options.noveltyBias * 100)}%`;
+  const subjectLayoutModes = normalizeSubjectLayoutModes(state.options.subjectLayoutModes);
+  const topLayerOffsetModes = normalizeTopLayerOffsetModes(state.options.topLayerOffsetModes);
+  if (layoutModeCenterInput) {
+    layoutModeCenterInput.checked = subjectLayoutModes.includes("center");
+  }
+  if (layoutModeThirdsInput) {
+    layoutModeThirdsInput.checked = subjectLayoutModes.includes("thirds");
+  }
+  if (layoutModeRandomInput) {
+    layoutModeRandomInput.checked = subjectLayoutModes.includes("random");
+  }
+  if (topLayerOffsetEnabledInput) {
+    topLayerOffsetEnabledInput.checked = topLayerOffsetModes.includes("offset");
+  }
+  if (topLayerOffsetLockedInput) {
+    topLayerOffsetLockedInput.checked = topLayerOffsetModes.includes("locked");
+  }
 }
 
 function normalizeExportAspect(value) {
@@ -2914,8 +3078,12 @@ function restoreState() {
       state.options.motion = clamp(Number(parsed.options.motion) || 4, 0, 10);
       state.options.noveltyBias = clamp(Number(parsed.options.noveltyBias) || 0.75, 0, 1);
       state.options.enabledPrinciples = mergeImmersiveMotionPrinciples(parsed.options.enabledPrinciples);
+      state.options.subjectLayoutModes = normalizeSubjectLayoutModes(parsed.options.subjectLayoutModes);
+      state.options.topLayerOffsetModes = normalizeTopLayerOffsetModes(parsed.options.topLayerOffsetModes);
     } else {
       state.options.enabledPrinciples = normalizeEnabledPrinciples(state.options.enabledPrinciples);
+      state.options.subjectLayoutModes = normalizeSubjectLayoutModes(state.options.subjectLayoutModes);
+      state.options.topLayerOffsetModes = normalizeTopLayerOffsetModes(state.options.topLayerOffsetModes);
     }
 
     if (parsed.exportOptions) {
@@ -5927,6 +6095,26 @@ function bindEvents() {
     state.options.noveltyBias = Number(noveltyRange.value) / 100;
     syncControlReadouts();
     persistState();
+  });
+
+  layoutModeCenterInput?.addEventListener("change", () => {
+    setSubjectLayoutMode("center", layoutModeCenterInput.checked);
+  });
+
+  layoutModeThirdsInput?.addEventListener("change", () => {
+    setSubjectLayoutMode("thirds", layoutModeThirdsInput.checked);
+  });
+
+  layoutModeRandomInput?.addEventListener("change", () => {
+    setSubjectLayoutMode("random", layoutModeRandomInput.checked);
+  });
+
+  topLayerOffsetEnabledInput?.addEventListener("change", () => {
+    setTopLayerOffsetMode("offset", topLayerOffsetEnabledInput.checked);
+  });
+
+  topLayerOffsetLockedInput?.addEventListener("change", () => {
+    setTopLayerOffsetMode("locked", topLayerOffsetLockedInput.checked);
   });
 
   exportAspectSelect.addEventListener("change", () => {
