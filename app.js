@@ -57,6 +57,9 @@ const LOW_RENDER_PROFILE = {
   maxLayers: 3,
   sceneCostBase: 2.6,
   sceneCostPerComplexity: 0.26,
+  countScale: 0.72,
+  detailScale: 0.62,
+  patchScale: 0.68,
   waveStep: 16,
   minWaveSpacing: 12,
   gridIntersectionBudget: 700,
@@ -71,6 +74,9 @@ const MEDIUM_RENDER_PROFILE = {
   maxLayers: 4,
   sceneCostBase: 3.4,
   sceneCostPerComplexity: 0.34,
+  countScale: 0.86,
+  detailScale: 0.82,
+  patchScale: 0.84,
   waveStep: 13,
   minWaveSpacing: 10,
   gridIntersectionBudget: 980,
@@ -85,6 +91,9 @@ const HIGH_RENDER_PROFILE = {
   maxLayers: 6,
   sceneCostBase: 4.8,
   sceneCostPerComplexity: 0.42,
+  countScale: 1,
+  detailScale: 1,
+  patchScale: 1,
   waveStep: 10,
   minWaveSpacing: 8,
   gridIntersectionBudget: 1600,
@@ -280,6 +289,28 @@ const researchPrinciples = [
     draw: drawMoireField,
   },
   {
+    id: "helmholtz_field",
+    name: "Helmholtz Field Warp",
+    mechanism:
+      "Alternating stripe orientations make equal panels feel stretched wider or taller despite identical geometry.",
+    fullScreenMotion: true,
+    alphaRange: [0.54, 0.9],
+    preferredBlends: ["screen", "source-over", "soft-light"],
+    scaleRange: [1, 1],
+    rotationRange: [0, 0],
+    offsetRange: [0, 0],
+    sample: (rng, options) => ({
+      panels: rng.int(5, 11 + Math.floor(options.complexity / 2)),
+      angle: rng.float(-0.88, 0.88),
+      stripeSpacing: rng.float(10, 24 - options.complexity * 0.25),
+      stripeFill: rng.float(0.26, 0.58),
+      drift: rng.float(0.03, 0.14 + options.motion * 0.02),
+      wobble: rng.float(0.02, 0.12),
+      lineContrast: rng.float(0.18, 0.42),
+    }),
+    draw: drawHelmholtzField,
+  },
+  {
     id: "barber_pole_shear",
     name: "Barber Pole Shear",
     mechanism:
@@ -332,6 +363,10 @@ const researchPrinciples = [
     name: "Cafe Wall Distortion",
     mechanism:
       "Offset checker rows and thin mortar lines induce local orientation bias and apparent wedge tilt.",
+    fullScreenMotion: true,
+    scaleRange: [1, 1],
+    rotationRange: [0, 0],
+    offsetRange: [0, 0],
     sample: (rng, options) => ({
       rows: rng.int(8, 16 + options.complexity),
       cols: rng.int(10, 22 + options.complexity),
@@ -340,26 +375,6 @@ const researchPrinciples = [
       wave: rng.float(0.2, 1.25),
     }),
     draw: drawCafeWall,
-  },
-  {
-    id: "zollner_lines",
-    name: "Zollner Orientation Conflict",
-    mechanism:
-      "Conflicting local line cues bias global parallel judgement and skew perceived orientation.",
-    alphaRange: [0.72, 0.94],
-    scaleRange: [1, 1],
-    rotationRange: [0, 0],
-    offsetRange: [0, 0],
-    sample: (rng, options) => ({
-      lineCount: rng.int(10, 26 + options.complexity * 2),
-      gapJitter: rng.float(0.08, 0.35),
-      tickLength: rng.float(5, 20 + options.complexity * 1.9),
-      tickGap: rng.float(8, 34),
-      tickAngle: rng.float(0.3, 0.95),
-      slope: rng.float(-0.12, 0.12),
-      stroke: rng.float(0.9, 2.6),
-    }),
-    draw: drawZollnerLines,
   },
   {
     id: "scintillating_grid",
@@ -420,21 +435,6 @@ const researchPrinciples = [
       seam: rng.float(0.04, 0.12),
     }),
     draw: drawBulgingCheckerboard,
-  },
-  {
-    id: "kanizsa_web",
-    name: "Kanizsa Contour Fields",
-    mechanism:
-      "Strategic occluders trigger completion of illusory edges and implied surfaces.",
-    sample: (rng, options) => ({
-      nodes: rng.int(3, 7),
-      radius: rng.float(18, 56 + options.complexity * 3),
-      bite: rng.float(0.25, 0.58),
-      orbit: rng.float(0.16, 0.42),
-      spin: rng.float(0.18, 0.95),
-      softness: rng.float(0.16, 0.6),
-    }),
-    draw: drawKanizsaWeb,
   },
   {
     id: "fraser_spiral",
@@ -500,6 +500,28 @@ const researchPrinciples = [
     draw: drawMachBands,
   },
   {
+    id: "truchet_flow_quilt",
+    name: "Truchet Flow Quilt",
+    mechanism:
+      "Alternating quarter-arc tiles create false diagonal rivers and rotating flow paths as the quilt drifts.",
+    fullScreenMotion: true,
+    alphaRange: [0.5, 0.88],
+    preferredBlends: ["screen", "source-over", "soft-light"],
+    scaleRange: [1, 1],
+    rotationRange: [0, 0],
+    offsetRange: [0, 0],
+    sample: (rng, options) => ({
+      rows: rng.int(6, 12 + Math.floor(options.complexity / 3)),
+      cols: rng.int(8, 16 + Math.floor(options.complexity / 2)),
+      angle: rng.float(-0.42, 0.42),
+      stroke: rng.float(1.1, 3.6),
+      drift: rng.float(0.02, 0.1 + options.motion * 0.018),
+      arcFill: rng.float(0.72, 0.94),
+      junction: rng.float(0.16, 0.42),
+    }),
+    draw: drawTruchetFlowQuilt,
+  },
+  {
     id: "troxler_field",
     name: "Troxler Fade Field",
     mechanism:
@@ -514,6 +536,28 @@ const researchPrinciples = [
       drift: rng.float(0.04, 0.34 + options.motion * 0.04),
     }),
     draw: drawTroxlerField,
+  },
+  {
+    id: "spiral_moire_pinwheel",
+    name: "Spiral Moiré Pinwheel",
+    mechanism:
+      "Two rotating radial lattices interfere into false spiral blades that seem to breathe, twist, and deepen toward the center.",
+    fullScreenMotion: true,
+    alphaRange: [0.52, 0.94],
+    preferredBlends: ["screen", "lighten", "source-over"],
+    scaleRange: [1, 1],
+    rotationRange: [0, 0],
+    offsetRange: [0, 0],
+    sample: (rng, options) => ({
+      spokes: rng.int(24, 52 + options.complexity),
+      rings: rng.int(5, 12 + Math.floor(options.complexity / 2)),
+      aperture: rng.float(0.06, 0.18),
+      spiralTurn: rng.float(0.18, 0.46),
+      wobble: rng.float(0.02, 0.11),
+      spin: rng.float(0.03, 0.12 + options.motion * 0.016),
+      lineWidth: rng.float(0.8, 2.2),
+    }),
+    draw: drawSpiralMoirePinwheel,
   },
   {
     id: "ripple_tunnel_mesh",
@@ -540,21 +584,6 @@ const researchPrinciples = [
       vanishDrift: rng.float(0.01, 0.05 + options.motion * 0.01),
     }),
     draw: drawRippleTunnelMesh,
-  },
-  {
-    id: "muller_lyer_field",
-    name: "Muller-Lyer Field",
-    mechanism:
-      "Arrowhead orientation alters perceived line length despite equal physical segment lengths.",
-    sample: (rng, options) => ({
-      rows: rng.int(6, 14 + Math.floor(options.complexity / 2)),
-      baseLength: rng.float(0.3, 0.72),
-      arrowLength: rng.float(0.035, 0.11),
-      wingAngle: rng.float(0.38, 1.05),
-      rowSlope: rng.float(-0.07, 0.07),
-      drift: rng.float(0.04, 0.32 + options.motion * 0.04),
-    }),
-    draw: drawMullerLyerField,
   },
   {
     id: "ponzo_corridor",
@@ -671,6 +700,11 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+function scaleDiscreteCount(value, scale = 1, min = 1, max = Number.POSITIVE_INFINITY) {
+  const safeValue = Number.isFinite(value) ? value : min;
+  return clamp(Math.round(safeValue * scale), min, max);
+}
+
 function getComposerMenuWidthBounds() {
   const maxWidth = Math.max(360, Math.floor(window.innerWidth * 0.96));
   const minWidth = Math.min(420, maxWidth);
@@ -782,6 +816,29 @@ function getCachedRenderCanvas(cacheKey, width, height, draw) {
   return entry.canvas;
 }
 
+function getAlternatingBandPatternCanvas(stepPx, colorA, colorB) {
+  const patternHeight = Math.max(4, roundToEven(stepPx * 2));
+  const cacheKey = makeRenderCacheKey("alternating-band-pattern", patternHeight, colorA, colorB);
+  return getCachedRenderCanvas(cacheKey, 64, patternHeight, (_, cacheCtx) => {
+    cacheCtx.fillStyle = colorA;
+    cacheCtx.fillRect(0, 0, 64, patternHeight * 0.5);
+    cacheCtx.fillStyle = colorB;
+    cacheCtx.fillRect(0, patternHeight * 0.5, 64, patternHeight * 0.5);
+  });
+}
+
+function getHorizontalGradientStripCanvas(leftColor, rightColor, height = 32) {
+  const stripHeight = Math.max(4, roundToEven(height));
+  const cacheKey = makeRenderCacheKey("horizontal-gradient-strip", stripHeight, leftColor, rightColor);
+  return getCachedRenderCanvas(cacheKey, 256, stripHeight, (_, cacheCtx) => {
+    const gradient = cacheCtx.createLinearGradient(0, 0, 256, 0);
+    gradient.addColorStop(0, leftColor);
+    gradient.addColorStop(1, rightColor);
+    cacheCtx.fillStyle = gradient;
+    cacheCtx.fillRect(0, 0, 256, stripHeight);
+  });
+}
+
 function clampGridToBudget(rows, cols, maxCells) {
   const safeRows = Math.max(2, Math.round(rows));
   const safeCols = Math.max(2, Math.round(cols));
@@ -810,16 +867,22 @@ function estimateLayerRenderCost(layer) {
       return 1.2 + ((Number(params.rows) || 0) * (Number(params.cols) || 0)) / 120;
     case "caustic_wave_mesh":
       return 1.5 + 12 / Math.max(6, Number(params.spacing) || 12);
+    case "helmholtz_field":
+      return 1.1 + (Number(params.panels) || 0) * 0.08;
     case "moire_field":
       return 1.35 + 10 / Math.max(6, Number(params.spacing) || 10);
     case "barber_pole_shear":
       return 1.45 + (Number(params.bands) || 0) * 0.22;
+    case "spiral_moire_pinwheel":
+      return 1.65 + (Number(params.spokes) || 0) * 0.022 + (Number(params.rings) || 0) * 0.08;
     case "pinna_brelstaff":
       return 1.2 + (Number(params.rings) || 0) * 0.08 + (Number(params.wedges) || 0) * 0.015;
     case "peripheral_drift":
       return 1.15 + (Number(params.rings) || 0) * 0.07 + (Number(params.segments) || 0) * 0.012;
     case "cafe_wall":
       return 1 + ((Number(params.rows) || 0) * (Number(params.cols) || 0)) / 260;
+    case "truchet_flow_quilt":
+      return 0.96 + ((Number(params.rows) || 0) + (Number(params.cols) || 0)) * 0.018;
     default:
       return researchById[layer?.principleId]?.fullScreenMotion ? 1.2 : 0.9;
   }
@@ -4093,32 +4156,116 @@ function drawWaveSet(ctx, width, height, config) {
 }
 
 function drawMoireField(ctx, width, height, params, palette, time, illusion) {
+  const renderProfile = getRuntimeRenderProfile();
+  const spacingScale = renderProfile.detailScale < 1 ? 1 + (1 - renderProfile.detailScale) * 0.24 : 1;
+  const strokeScale = renderProfile.id === "low" ? 0.88 : renderProfile.id === "medium" ? 0.94 : 1;
   const phase = getMotionAngle(params.drift * (0.75 + illusion.motionStrength));
   drawWaveSet(ctx, width, height, {
     angle: params.angleA,
-    spacing: params.spacing,
+    spacing: params.spacing * spacingScale,
     amplitude: params.amplitude,
     freq: params.freq,
     phase,
-    stroke: params.stroke,
+    stroke: params.stroke * strokeScale,
     color: cssTone(palette.accents[0], 0.7),
   });
 
   drawWaveSet(ctx, width, height, {
     angle: params.angleB,
-    spacing: params.spacing * 1.08,
+    spacing: params.spacing * 1.08 * spacingScale,
     amplitude: params.amplitude * 0.92,
     freq: params.freq * 1.17,
     phase: -phase * 1.14,
-    stroke: params.stroke,
+    stroke: params.stroke * strokeScale,
     color: cssTone(palette.accents[1], 0.66),
   });
 }
 
+function drawHelmholtzField(ctx, width, height, params, palette, time, illusion) {
+  const renderProfile = getRuntimeRenderProfile();
+  const span = Math.hypot(width, height);
+  const densityScale = renderProfile.id === "low" ? 0.76 : renderProfile.id === "medium" ? 0.9 : 1;
+  const panelCount = clamp(Math.round(params.panels * densityScale), 4, 16);
+  const panelStep = (span * 2) / Math.max(1, panelCount);
+  const stripeSpacing = Math.max(
+    8,
+    params.stripeSpacing * (renderProfile.id === "low" ? 1.18 : renderProfile.id === "medium" ? 1.08 : 1)
+  );
+  const stripeWidth = Math.max(1.8, stripeSpacing * params.stripeFill);
+  const motionStrength = illusion?.motionStrength || 0;
+  const driftRate = params.drift * (0.56 + motionStrength * 0.16);
+  const wobblePhase = getMotionAngle(params.wobble * (0.42 + motionStrength * 0.08));
+  const bgTone = toneShift(palette.bgA, 0, -20, -14);
+  const dividerTone = toneShift(palette.ink, 0, -14, 2);
+  const warmStripe = toneShift(palette.accents[0], 0, -8, 22);
+  const coolStripe = toneShift(palette.accents[2], 0, -16, 12);
+  const warmPanel = toneShift(palette.bgB, 0, -16, -6);
+  const coolPanel = toneShift(palette.bgA, 0, -10, -16);
+  let visibleCount = 0;
+
+  ctx.fillStyle = cssTone(bgTone, 0.98);
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.save();
+  ctx.translate(width * 0.5, height * 0.5);
+  ctx.rotate(params.angle + Math.sin(wobblePhase * 0.24) * 0.05);
+
+  forEachVisibleLinearIndex(
+    { viewportStart: -span, viewportEnd: span, stepPx: panelStep, offsetPx: -span, overscanSteps: 1 },
+    (panelIndex, x) => {
+      const vertical = Math.abs(panelIndex) % 2 === 0;
+      const localAngle = vertical ? 0 : Math.PI * 0.5;
+      const stripeTone = vertical ? warmStripe : coolStripe;
+      const panelFill = vertical ? warmPanel : coolPanel;
+      const stripeAlpha = clamp(
+        0.54 + params.lineContrast + Math.sin(panelIndex * 0.72 + wobblePhase) * 0.08,
+        0.42,
+        0.92
+      );
+      const dividerWidth = Math.max(1, stripeWidth * 0.18);
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x, -span, panelStep + 1, span * 2);
+      ctx.clip();
+      ctx.fillStyle = cssTone(panelFill, vertical ? 0.52 : 0.44);
+      ctx.fillRect(x, -span, panelStep + 1, span * 2);
+      ctx.translate(x + panelStep * 0.5, 0);
+      visibleCount += drawLinearStripePlane(
+        ctx,
+        panelStep * 1.08,
+        span * 2,
+        stripeSpacing,
+        localAngle,
+        stripeWidth,
+        cssTone(stripeTone, stripeAlpha),
+        null,
+        driftRate * (vertical ? 1 : -1)
+      );
+      ctx.restore();
+
+      ctx.fillStyle = cssTone(dividerTone, 0.16);
+      ctx.fillRect(x + panelStep - dividerWidth, -span, dividerWidth, span * 2);
+      visibleCount += 1;
+    }
+  );
+
+  ctx.restore();
+  recordVisibleInstances("helmholtz_field", visibleCount);
+}
+
 function drawCafeWall(ctx, width, height, params, palette, time) {
-  const tileW = width / params.cols;
-  const tileH = height / params.rows;
+  const renderProfile = getRuntimeRenderProfile();
+  const boundedGrid = clampGridToBudget(
+    scaleDiscreteCount(params.rows, renderProfile.countScale, 5, 24),
+    scaleDiscreteCount(params.cols, renderProfile.countScale, 6, 30),
+    Math.round(renderProfile.checkerCellBudget * 1.05)
+  );
+  const tileW = width / boundedGrid.cols;
+  const tileH = height / boundedGrid.rows;
   const mortarThickness = Math.max(1, tileH * params.mortar);
+  const overdrawX = tileW * 3;
+  const overdrawY = tileH * 3;
 
   const dark = toneShift(palette.accents[2], 0, -26, -22);
   const light = toneShift(palette.accents[0], 0, -8, 24);
@@ -4130,36 +4277,146 @@ function drawCafeWall(ctx, width, height, params, palette, time) {
   let visibleCount = 0;
 
   forEachVisibleLinearIndex(
-    { viewportStart: 0, viewportEnd: height, stepPx: tileH, offsetPx: 0, overscanSteps: 2 },
-    (row, y) => {
-      const waveOffset = Math.sin(row * 0.6 + wavePhase) * tileW * 0.4;
-    const rowOffset = ((row % 2 === 0 ? 1 : -1) * params.offset * tileW) / 2 + waveOffset;
+    { viewportStart: -overdrawY, viewportEnd: height + overdrawY, stepPx: tileH, offsetPx: 0, overscanSteps: 2 },
+    (rowIndex, y) => {
+      const waveOffset = Math.sin(rowIndex * 0.6 + wavePhase) * tileW * 0.4;
+      const rawRowOffset = ((rowIndex % 2 === 0 ? 1 : -1) * params.offset * tileW) / 2 + waveOffset;
+      const wrappedRowOffset = getWrappedOffset(tileW, rawRowOffset);
+      const worldColOffset = Math.round((rawRowOffset - wrappedRowOffset) / tileW);
 
       visibleCount += forEachVisibleLinearIndex(
-        { viewportStart: 0, viewportEnd: width, stepPx: tileW, offsetPx: rowOffset, overscanSteps: 2 },
-        (col, x) => {
-          ctx.fillStyle = (col + row) % 2 === 0 ? darkFill : lightFill;
+        {
+          viewportStart: -overdrawX,
+          viewportEnd: width + overdrawX,
+          stepPx: tileW,
+          offsetPx: wrappedRowOffset,
+          overscanSteps: 2,
+        },
+        (colIndex, x) => {
+          const worldCol = colIndex + worldColOffset;
+          ctx.fillStyle = (worldCol + rowIndex) % 2 === 0 ? darkFill : lightFill;
           ctx.fillRect(x, y, tileW + 1, tileH + 1);
         }
       );
 
       ctx.fillStyle = mortarFill;
-      ctx.fillRect(0, y + tileH * 0.5 - mortarThickness * 0.5, width, mortarThickness);
+      ctx.fillRect(
+        -overdrawX,
+        y + tileH * 0.5 - mortarThickness * 0.5,
+        width + overdrawX * 2,
+        mortarThickness
+      );
     }
   );
 
   recordVisibleInstances("cafe_wall", visibleCount);
 }
 
+function drawDelboeufRingField(ctx, width, height, params, palette, time, illusion) {
+  const renderProfile = getRuntimeRenderProfile();
+  const motionStrength = illusion?.motionStrength || 0;
+  const pairCount = scaleDiscreteCount(params.pairs ?? params.rings ?? 8, renderProfile.countScale, 4, 18);
+  const rows = Math.max(1, Math.round(Math.sqrt((pairCount * height) / Math.max(1, width))));
+  const cols = Math.max(1, Math.ceil(pairCount / rows));
+  const cellW = width / cols;
+  const cellH = height / rows;
+  const minDim = Math.min(cellW, cellH);
+  const inner = Math.min(
+    Number.isFinite(params.innerRadius) ? params.innerRadius : minDim * (params.innerScale || 0.11),
+    minDim * 0.22
+  );
+  const separation = cellW * clamp(params.spacing || 0.22, 0.14, 0.34);
+  const driftPhase = getMotionAngle((params.drift || 0.02) * (0.68 + motionStrength * 0.12));
+  const wobblePhase = getMotionAngle((params.wobble || 0.05) * 2.8);
+  const bgA = toneShift(palette.bgA, 0, -20, -14);
+  const bgB = toneShift(palette.bgB, 0, -16, -8);
+  let visibleCount = 0;
+
+  function getPairSprite(accentIndex, invert) {
+    const spriteW = Math.max(48, roundToEven(cellW * 0.9));
+    const spriteH = Math.max(48, roundToEven(cellH * 0.86));
+    const leftOuter = inner * (invert ? (params.outerScaleB || 3.1) : (params.outerScaleA || 1.9));
+    const rightOuter = inner * (invert ? (params.outerScaleA || 1.9) : (params.outerScaleB || 3.1));
+    const tone = toneShift(palette.accents[accentIndex % palette.accents.length], 0, -8, 12);
+    const inkTone = toneShift(palette.ink, 0, -10, 6);
+    const bgTone = invert ? bgB : bgA;
+    const cacheKey = makeRenderCacheKey(
+      "delboeuf-pair",
+      spriteW,
+      spriteH,
+      inner.toFixed(2),
+      leftOuter.toFixed(2),
+      rightOuter.toFixed(2),
+      separation.toFixed(2),
+      accentIndex,
+      invert,
+      paletteCacheKey(palette)
+    );
+    return getCachedRenderCanvas(cacheKey, spriteW, spriteH, (_, cacheCtx) => {
+      const leftX = spriteW * 0.5 - separation;
+      const rightX = spriteW * 0.5 + separation;
+      const centerY = spriteH * 0.52;
+      cacheCtx.fillStyle = cssTone(bgTone, 0.92);
+      cacheCtx.fillRect(0, 0, spriteW, spriteH);
+
+      cacheCtx.strokeStyle = cssTone(tone, 0.78);
+      cacheCtx.lineWidth = Math.max(1.4, minDim * 0.015);
+      cacheCtx.beginPath();
+      cacheCtx.arc(leftX, centerY, leftOuter, 0, TAU);
+      cacheCtx.stroke();
+      cacheCtx.beginPath();
+      cacheCtx.arc(rightX, centerY, rightOuter, 0, TAU);
+      cacheCtx.stroke();
+
+      cacheCtx.fillStyle = cssTone(inkTone, 0.9);
+      cacheCtx.beginPath();
+      cacheCtx.arc(leftX, centerY, inner, 0, TAU);
+      cacheCtx.fill();
+      cacheCtx.beginPath();
+      cacheCtx.arc(rightX, centerY, inner, 0, TAU);
+      cacheCtx.fill();
+    });
+  }
+
+  ctx.fillStyle = cssTone(bgA, 0.98);
+  ctx.fillRect(0, 0, width, height);
+
+  for (let index = 0; index < pairCount; index += 1) {
+    const row = Math.floor(index / cols);
+    const col = index % cols;
+    const invert = index % 2 === 1;
+    const sprite = getPairSprite(index, invert);
+    const baseX = col * cellW + cellW * 0.5;
+    const baseY = row * cellH + cellH * 0.52;
+    const offsetX = Math.sin(index * 0.73 + driftPhase) * cellW * 0.04;
+    const offsetY = Math.cos(index * 0.61 + driftPhase * 0.82) * cellH * 0.03;
+    const wobble = Math.sin(index * 0.8 + wobblePhase) * minDim * (params.wobble || 0.05) * 0.2;
+    ctx.drawImage(
+      sprite,
+      baseX - sprite.width * 0.5 + offsetX,
+      baseY - sprite.height * 0.5 + offsetY + wobble,
+      sprite.width,
+      sprite.height
+    );
+    visibleCount += 2;
+  }
+
+  recordVisibleInstances("orbison_ring_warp", visibleCount);
+}
+
 function drawZollnerLines(ctx, width, height, params, palette) {
-  const lineCount = Math.max(4, Math.round(params.lineCount));
+  const renderProfile = getRuntimeRenderProfile();
+  const lineCount = scaleDiscreteCount(params.lineCount, renderProfile.countScale, 4, 40);
   const usableHeight = height * 1.22;
   const lineGap = usableHeight / Math.max(3, lineCount - 1);
   const topOffset = -height * 0.11;
   const bleed = Math.max(width, height) * 0.16;
   const lineSpan = width + bleed * 2;
   const minTickGap = Math.max(8, Math.min(width, height) * 0.012);
-  const tickGap = Math.max(minTickGap, params.tickGap);
+  const tickGap = Math.max(
+    minTickGap,
+    params.tickGap * (renderProfile.id === "low" ? 1.24 : renderProfile.id === "medium" ? 1.08 : 1)
+  );
   const tickLength = Math.max(4, Math.min(params.tickLength, lineGap * 0.78));
   const baseStroke = Math.max(0.8, Math.min(params.stroke, lineGap * 0.18));
   let visibleCount = 0;
@@ -4396,22 +4653,26 @@ function drawScintillatingGrid(ctx, width, height, params, palette, time, illusi
 }
 
 function drawPeripheralDrift(ctx, width, height, params, palette, time) {
+  const renderProfile = getRuntimeRenderProfile();
   const cx = width * 0.5;
   const cy = height * 0.5;
   const maxRadius = Math.min(width, height) * 0.48;
-  const ringStep = maxRadius / (params.rings + 1);
+  const ringCount = scaleDiscreteCount(params.rings, renderProfile.countScale, 3, 18);
+  const baseSegments = scaleDiscreteCount(params.segments, renderProfile.detailScale, 12, 72);
+  const ringStep = maxRadius / (ringCount + 1);
   const cycleA = toneShift(palette.accents[0], 0, 5, 15);
   const cycleB = toneShift(palette.accents[2], 0, -30, -12);
   const cycleC = toneShift(palette.ink, 0, -25, 10);
   const cycleD = toneShift(palette.accents[1], 0, -6, -8);
+  let visibleCount = 0;
 
   ctx.save();
   ctx.translate(cx, cy);
 
-  for (let ring = 1; ring <= params.rings; ring += 1) {
+  for (let ring = 1; ring <= ringCount; ring += 1) {
     const radius = ring * ringStep;
     const thickness = ringStep * params.width;
-    const localSegments = params.segments + ring * 2;
+    const localSegments = clamp(baseSegments + Math.round(ring * 2 * renderProfile.detailScale), 12, 80);
     const spin = getMotionAngle(params.speed) + ring * params.twist * 12;
 
     for (let index = 0; index < localSegments; index += 1) {
@@ -4430,10 +4691,12 @@ function drawPeripheralDrift(ctx, width, height, params, palette, time) {
         paletteIndex === 0 ? cycleA : paletteIndex === 1 ? cycleB : paletteIndex === 2 ? cycleC : cycleD;
       ctx.fillStyle = cssTone(fillTone, alpha);
       ctx.fill();
+      visibleCount += 1;
     }
   }
 
   ctx.restore();
+  recordVisibleInstances("peripheral_drift", visibleCount);
 }
 
 function drawPlaidShearField(ctx, width, height, params, palette, time) {
@@ -4495,12 +4758,14 @@ function drawPlaidShearField(ctx, width, height, params, palette, time) {
 }
 
 function drawKanizsaWeb(ctx, width, height, params, palette, time) {
+  const renderProfile = getRuntimeRenderProfile();
   const cx = width * 0.5;
   const cy = height * 0.5;
   const orbitRadius = Math.min(width, height) * params.orbit;
+  const nodeCount = scaleDiscreteCount(params.nodes, renderProfile.countScale, 3, 7);
 
-  for (let i = 0; i < params.nodes; i += 1) {
-    const theta = (i / params.nodes) * TAU + getMotionAngle(params.spin);
+  for (let i = 0; i < nodeCount; i += 1) {
+    const theta = (i / nodeCount) * TAU + getMotionAngle(params.spin);
     const point = kanizsaPointScratch[i] || (kanizsaPointScratch[i] = { x: 0, y: 0, theta: 0 });
     point.x = cx + Math.cos(theta) * orbitRadius;
     point.y = cy + Math.sin(theta) * orbitRadius;
@@ -4509,14 +4774,14 @@ function drawKanizsaWeb(ctx, width, height, params, palette, time) {
 
   ctx.beginPath();
   ctx.moveTo(kanizsaPointScratch[0].x, kanizsaPointScratch[0].y);
-  for (let i = 1; i < params.nodes; i += 1) {
+  for (let i = 1; i < nodeCount; i += 1) {
     ctx.lineTo(kanizsaPointScratch[i].x, kanizsaPointScratch[i].y);
   }
   ctx.closePath();
   ctx.fillStyle = cssTone(toneShift(palette.accents[0], 0, -10, 6), params.softness * 0.35);
   ctx.fill();
 
-  for (let i = 0; i < params.nodes; i += 1) {
+  for (let i = 0; i < nodeCount; i += 1) {
     const p = kanizsaPointScratch[i];
     const towardCenter = Math.atan2(cy - p.y, cx - p.x);
     const biteAngle = params.bite;
@@ -4534,22 +4799,26 @@ function drawKanizsaWeb(ctx, width, height, params, palette, time) {
     ctx.fill();
   }
 
-  recordVisibleInstances("kanizsa_web", params.nodes);
+  recordVisibleInstances("kanizsa_web", nodeCount);
 }
 
 function drawFraserSpiral(ctx, width, height, params, palette, time) {
+  const renderProfile = getRuntimeRenderProfile();
   const cx = width * 0.5;
   const cy = height * 0.5;
   const maxRadius = Math.min(width, height) * 0.48;
-  const ringStep = maxRadius / params.rings;
+  const ringCount = scaleDiscreteCount(params.rings, renderProfile.countScale, 5, 24);
+  const blockScale = renderProfile.id === "low" ? 1.2 : renderProfile.id === "medium" ? 1.08 : 1;
+  const ringStep = maxRadius / ringCount;
+  let visibleCount = 0;
 
   ctx.save();
   ctx.translate(cx, cy);
 
-  for (let ring = 1; ring <= params.rings; ring += 1) {
+  for (let ring = 1; ring <= ringCount; ring += 1) {
     const radius = ring * ringStep;
     const circumference = TAU * radius;
-    const blocks = Math.max(8, Math.floor(circumference / (params.block * 1.1)));
+    const blocks = Math.max(6, Math.floor(circumference / (params.block * 1.1 * blockScale)));
 
     for (let i = 0; i < blocks; i += 1) {
       const base = (i / blocks) * TAU + ring * params.twist + getMotionAngle(params.speed);
@@ -4566,6 +4835,7 @@ function drawFraserSpiral(ctx, width, height, params, palette, time) {
       ctx.fillStyle = cssTone(palette.accents[(i + ring) % palette.accents.length], 0.7);
       ctx.fillRect(-widthBlock * 0.5, -heightBlock * 0.5, widthBlock, heightBlock);
       ctx.restore();
+      visibleCount += 1;
     }
 
     ctx.beginPath();
@@ -4573,9 +4843,11 @@ function drawFraserSpiral(ctx, width, height, params, palette, time) {
     ctx.lineWidth = params.stroke;
     ctx.strokeStyle = cssTone(toneShift(palette.ink, 0, -10, -4), 0.4);
     ctx.stroke();
+    visibleCount += 1;
   }
 
   ctx.restore();
+  recordVisibleInstances("fraser_spiral", visibleCount);
 }
 
 function pathRoundedRect(ctx, x, y, width, height, radius) {
@@ -4769,19 +5041,23 @@ function drawStripePlane(ctx, width, height, spacing, angle, stripeWidth, stripe
 }
 
 function drawCausticWaveMesh(ctx, width, height, params, palette, time, illusion) {
+  const renderProfile = getRuntimeRenderProfile();
   const base = toneShift(palette.bgA, 0, -14, -10);
   ctx.fillStyle = cssTone(base, 0.98);
   ctx.fillRect(0, 0, width, height);
 
   const veilAngle = params.angleA * 0.45 + params.angleB * 0.2;
   const veilSpan = Math.hypot(width, height);
-  const bandWidth = veilSpan / Math.max(3, params.veilBands + 1);
+  const veilBands = scaleDiscreteCount(params.veilBands, renderProfile.countScale, 2, 8);
+  const spacingScale = renderProfile.detailScale < 1 ? 1 + (1 - renderProfile.detailScale) * 0.22 : 1;
+  const strokeScale = renderProfile.id === "low" ? 0.88 : renderProfile.id === "medium" ? 0.94 : 1;
+  const bandWidth = veilSpan / Math.max(3, veilBands + 1);
   const veilDrift = getMotionShift(params.drift, veilSpan * 0.08, bandWidth);
   ctx.save();
   ctx.translate(width * 0.5, height * 0.5);
   ctx.rotate(veilAngle);
   ctx.translate(-width * 0.5, -height * 0.5);
-  for (let i = -1; i <= params.veilBands; i += 1) {
+  for (let i = -1; i <= veilBands; i += 1) {
     const x = i * bandWidth + veilDrift;
     const gradient = ctx.createLinearGradient(x, 0, x + bandWidth, 0);
     gradient.addColorStop(0, cssTone(palette.accents[i & 3], 0));
@@ -4795,29 +5071,29 @@ function drawCausticWaveMesh(ctx, width, height, params, palette, time, illusion
   const phase = getMotionAngle(params.drift * (0.65 + illusion.motionStrength));
   drawWaveSet(ctx, width, height, {
     angle: params.angleA,
-    spacing: params.spacing,
+    spacing: params.spacing * spacingScale,
     amplitude: params.amplitude,
     freq: params.freq,
     phase,
-    stroke: params.stroke,
+    stroke: params.stroke * strokeScale,
     color: cssTone(palette.accents[0], 0.42),
   });
   drawWaveSet(ctx, width, height, {
     angle: params.angleB,
-    spacing: params.spacing * 0.95,
+    spacing: params.spacing * 0.95 * spacingScale,
     amplitude: params.amplitude * 0.88,
     freq: params.freq * 1.15,
     phase: -phase * 1.2,
-    stroke: params.stroke * 0.96,
+    stroke: params.stroke * 0.96 * strokeScale,
     color: cssTone(palette.accents[2], 0.34),
   });
   drawWaveSet(ctx, width, height, {
     angle: params.angleC,
-    spacing: params.spacing * 1.12,
+    spacing: params.spacing * 1.12 * spacingScale,
     amplitude: params.amplitude * 0.74,
     freq: params.freq * 0.82,
     phase: phase * 0.72 + Math.PI * 0.25,
-    stroke: params.stroke * 0.9,
+    stroke: params.stroke * 0.9 * strokeScale,
     color: cssTone(toneShift(palette.ink, 0, -24, -10), 0.22),
   });
 }
@@ -5065,25 +5341,29 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
 }
 
 function drawPinnaBrelstaff(ctx, width, height, params, palette, time) {
+  const renderProfile = getRuntimeRenderProfile();
   const cx = width * 0.5;
   const cy = height * 0.5;
   const maxRadius = Math.min(width, height) * 0.48;
-  const ringStep = maxRadius / (params.rings + 1);
-  const arcSpan = (TAU / params.wedges) * params.arcFill;
+  const ringCount = scaleDiscreteCount(params.rings, renderProfile.countScale, 3, 14);
+  const wedgeCount = scaleDiscreteCount(params.wedges, renderProfile.detailScale, 12, 56);
+  const ringStep = maxRadius / (ringCount + 1);
+  const arcSpan = (TAU / wedgeCount) * params.arcFill;
   const toneA = toneShift(palette.accents[0], 0, 6, 12);
   const toneB = toneShift(palette.accents[2], 0, -16, -10);
   const toneC = toneShift(palette.ink, 0, -18, 8);
+  let visibleCount = 0;
 
   ctx.save();
   ctx.translate(cx, cy);
 
-  for (let ring = 1; ring <= params.rings; ring += 1) {
+  for (let ring = 1; ring <= ringCount; ring += 1) {
     const radius = ring * ringStep;
     const band = ringStep * params.thickness;
     const spin = getMotionAngle(params.spin * (ring % 2 === 0 ? 1 : -1));
 
-    for (let wedge = 0; wedge < params.wedges; wedge += 1) {
-      const theta = (wedge / params.wedges) * TAU + spin;
+    for (let wedge = 0; wedge < wedgeCount; wedge += 1) {
+      const theta = (wedge / wedgeCount) * TAU + spin;
       const start = theta - arcSpan * 0.5;
       const end = theta + arcSpan * 0.5;
       const inner = Math.max(0, radius - band * 0.5);
@@ -5096,6 +5376,7 @@ function drawPinnaBrelstaff(ctx, width, height, params, palette, time) {
       const fillTone = (ring + wedge) % 3 === 0 ? toneA : (ring + wedge) % 3 === 1 ? toneB : toneC;
       ctx.fillStyle = cssTone(fillTone, 0.66);
       ctx.fill();
+      visibleCount += 1;
 
       const tiltSign = wedge % 2 === 0 ? 1 : -1;
       ctx.save();
@@ -5104,10 +5385,12 @@ function drawPinnaBrelstaff(ctx, width, height, params, palette, time) {
       ctx.fillStyle = cssTone(palette.accents[(wedge + ring) % palette.accents.length], 0.72);
       ctx.fillRect(-band * 0.54, -band * 0.18, band * 1.08, band * 0.36);
       ctx.restore();
+      visibleCount += 1;
     }
   }
 
   ctx.restore();
+  recordVisibleInstances("pinna_brelstaff", visibleCount);
 }
 
 function drawOuchiTiles(ctx, width, height, params, palette, time) {
@@ -5159,30 +5442,34 @@ function drawOuchiTiles(ctx, width, height, params, palette, time) {
 }
 
 function drawMachBands(ctx, width, height, params, palette, time) {
+  const renderProfile = getRuntimeRenderProfile();
   const span = Math.hypot(width, height);
-  const bandHeight = (span * 2) / params.bands;
+  const bandCount = scaleDiscreteCount(params.bands, renderProfile.countScale, 4, 18);
+  const bandHeight = (span * 2) / bandCount;
+  let visibleCount = 0;
 
   ctx.save();
   ctx.translate(width * 0.5, height * 0.5);
   ctx.rotate(params.orientation);
   ctx.translate(-width * 0.5, -height * 0.5);
 
-  for (let i = 0; i < params.bands; i += 1) {
-    const t = i / Math.max(1, params.bands - 1);
+  for (let i = 0; i < bandCount; i += 1) {
+    const t = i / Math.max(1, bandCount - 1);
     const yBase = -span + i * bandHeight;
     const wobble = Math.sin(i * 0.75 + getMotionAngle(params.drift)) * bandHeight * params.ripple;
     const y = yBase + wobble;
 
     const leftTone = toneShift(palette.bgA, 0, -6 + t * 6, -10 + t * 42 * params.ramp);
     const rightTone = toneShift(palette.bgB, 0, -12 + t * 12, 16 - t * 46 * (1 - params.ramp));
-    const gradient = ctx.createLinearGradient(-span, 0, span * 2, 0);
-    gradient.addColorStop(0, cssTone(leftTone, 0.92));
-    gradient.addColorStop(1, cssTone(rightTone, 0.92));
+    const stripCanvas = getHorizontalGradientStripCanvas(
+      cssTone(leftTone, 0.92),
+      cssTone(rightTone, 0.92),
+      bandHeight
+    );
+    ctx.drawImage(stripCanvas, -span, y, span * 3, bandHeight + 1);
+    visibleCount += 1;
 
-    ctx.fillStyle = gradient;
-    ctx.fillRect(-span, y, span * 3, bandHeight + 1);
-
-    if (i < params.bands - 1) {
+    if (i < bandCount - 1) {
       const edgeY = y + bandHeight;
       const edgeAlpha = clamp(params.edgeBoost * 1.3, 0.04, 0.38);
       ctx.fillStyle = cssTone(palette.ink, edgeAlpha);
@@ -5193,6 +5480,137 @@ function drawMachBands(ctx, width, height, params, palette, time) {
   }
 
   ctx.restore();
+  recordVisibleInstances("mach_bands", visibleCount);
+}
+
+function drawTruchetFlowQuilt(ctx, width, height, params, palette, time, illusion) {
+  const renderProfile = getRuntimeRenderProfile();
+  const boundedGrid = clampGridToBudget(
+    params.rows,
+    params.cols,
+    Math.round(renderProfile.gridIntersectionBudget * 0.7)
+  );
+  const tileSize = Math.max(width / boundedGrid.cols, height / boundedGrid.rows);
+  const tileScale = renderProfile.id === "low" ? 1.1 : renderProfile.id === "medium" ? 1.04 : 1;
+  const cellSize = Math.max(22, tileSize * tileScale);
+  const motionStrength = illusion?.motionStrength || 0;
+  const bgToneA = toneShift(palette.bgA, 0, -20, -14);
+  const bgToneB = toneShift(palette.bgB, 0, -14, -8);
+  const arcToneA = toneShift(palette.accents[0], 0, -6, 18);
+  const arcToneB = toneShift(palette.accents[2], 0, -12, 10);
+  const accentStroke = toneShift(palette.ink, 0, -18, 8);
+  const roundedSize = Math.max(24, roundToEven(cellSize));
+  const bandWidth = Math.max(
+    2,
+    Math.min(roundedSize * 0.34, roundedSize * (0.08 + params.junction * 0.22) + params.stroke * 0.65)
+  );
+  const arcRadius = roundedSize * clamp(params.arcFill, 0.7, 0.96);
+  const blockSize = roundedSize * 2;
+  const driftDistance = getMotionShift(
+    params.drift * (0.72 + motionStrength * 0.16),
+    blockSize,
+    blockSize,
+    1
+  );
+  const shiftX = getWrappedOffset(blockSize, Math.cos(params.angle) * driftDistance);
+  const shiftY = getWrappedOffset(blockSize, Math.sin(params.angle) * driftDistance);
+  const overdraw = blockSize * 2 + Math.hypot(width, height) * 0.12;
+  const patternCanvas = getCachedRenderCanvas(
+    makeRenderCacheKey(
+      "truchet-quilt",
+      blockSize,
+      bandWidth.toFixed(2),
+      arcRadius.toFixed(2),
+      paletteCacheKey(palette)
+    ),
+    blockSize,
+    blockSize,
+    (_, cacheCtx) => {
+      function drawTile(tileX, tileY, orientation, parity) {
+        const bgTone = parity === 0 ? bgToneA : bgToneB;
+        const arcTone = orientation === 0 ? arcToneA : arcToneB;
+
+        cacheCtx.fillStyle = cssTone(bgTone, 0.96);
+        cacheCtx.fillRect(tileX, tileY, roundedSize, roundedSize);
+        cacheCtx.strokeStyle = cssTone(toneShift(bgTone, 0, -18, 10), 0.18);
+        cacheCtx.lineWidth = Math.max(1, roundedSize * 0.02);
+        cacheCtx.strokeRect(tileX, tileY, roundedSize, roundedSize);
+
+        cacheCtx.lineCap = "round";
+        cacheCtx.strokeStyle = cssTone(arcTone, 0.78);
+        cacheCtx.lineWidth = bandWidth;
+        cacheCtx.beginPath();
+        if (orientation === 0) {
+          cacheCtx.arc(tileX, tileY, arcRadius, 0, Math.PI * 0.5);
+          cacheCtx.moveTo(tileX + roundedSize, tileY + roundedSize);
+          cacheCtx.arc(tileX + roundedSize, tileY + roundedSize, arcRadius, Math.PI, Math.PI * 1.5);
+        } else {
+          cacheCtx.arc(tileX + roundedSize, tileY, arcRadius, Math.PI * 0.5, Math.PI);
+          cacheCtx.moveTo(tileX, tileY + roundedSize);
+          cacheCtx.arc(tileX, tileY + roundedSize, arcRadius, Math.PI * 1.5, TAU);
+        }
+        cacheCtx.stroke();
+
+        cacheCtx.strokeStyle = cssTone(accentStroke, 0.18);
+        cacheCtx.lineWidth = Math.max(0.8, bandWidth * 0.18);
+        cacheCtx.beginPath();
+        if (orientation === 0) {
+          cacheCtx.arc(tileX, tileY, arcRadius, 0, Math.PI * 0.5);
+          cacheCtx.moveTo(tileX + roundedSize, tileY + roundedSize);
+          cacheCtx.arc(tileX + roundedSize, tileY + roundedSize, arcRadius, Math.PI, Math.PI * 1.5);
+        } else {
+          cacheCtx.arc(tileX + roundedSize, tileY, arcRadius, Math.PI * 0.5, Math.PI);
+          cacheCtx.moveTo(tileX, tileY + roundedSize);
+          cacheCtx.arc(tileX, tileY + roundedSize, arcRadius, Math.PI * 1.5, TAU);
+        }
+        cacheCtx.stroke();
+      }
+
+      drawTile(0, 0, 0, 0);
+      drawTile(roundedSize, 0, 1, 1);
+      drawTile(0, roundedSize, 1, 1);
+      drawTile(roundedSize, roundedSize, 0, 0);
+    }
+  );
+  const pattern = ctx.createPattern(patternCanvas, "repeat");
+
+  ctx.fillStyle = cssTone(bgToneA, 0.98);
+  ctx.fillRect(0, 0, width, height);
+  if (pattern) {
+    ctx.save();
+    ctx.translate(width * 0.5, height * 0.5);
+    ctx.rotate(params.angle * 0.18);
+    ctx.translate(-width * 0.5, -height * 0.5);
+    ctx.translate(shiftX - roundedSize, shiftY - roundedSize);
+    ctx.fillStyle = pattern;
+    ctx.fillRect(-overdraw, -overdraw, width + overdraw * 2, height + overdraw * 2);
+    ctx.restore();
+  } else {
+    for (let y = -roundedSize; y < height + roundedSize; y += blockSize) {
+      for (let x = -roundedSize; x < width + roundedSize; x += blockSize) {
+        ctx.drawImage(patternCanvas, x + shiftX - roundedSize, y + shiftY - roundedSize, blockSize, blockSize);
+      }
+    }
+  }
+
+  const colBounds = getVisibleIndexBounds(
+    -overdraw,
+    width + overdraw,
+    roundedSize,
+    shiftX - roundedSize,
+    2
+  );
+  const rowBounds = getVisibleIndexBounds(
+    -overdraw,
+    height + overdraw,
+    roundedSize,
+    shiftY - roundedSize,
+    2
+  );
+  const visibleCount = Math.max(0, rowBounds.end - rowBounds.start + 1) *
+    Math.max(0, colBounds.end - colBounds.start + 1);
+
+  recordVisibleInstances("truchet_flow_quilt", visibleCount);
 }
 
 function drawTroxlerField(ctx, width, height, params, palette, time) {
@@ -5239,6 +5657,101 @@ function drawTroxlerField(ctx, width, height, params, palette, time) {
   }
 
   recordVisibleInstances("troxler_field", blobCount);
+}
+
+function drawSpiralMoirePinwheel(ctx, width, height, params, palette, time, illusion) {
+  const renderProfile = getRuntimeRenderProfile();
+  const cx = width * 0.5;
+  const cy = height * 0.5;
+  const minDim = Math.min(width, height);
+  const outer = Math.hypot(width, height) * 0.54;
+  const aperture = minDim * params.aperture;
+  const motionStrength = illusion?.motionStrength || 0;
+  const spokeScale = renderProfile.id === "low" ? 0.68 : renderProfile.id === "medium" ? 0.84 : 1;
+  const spokeCount = clamp(Math.round(params.spokes * spokeScale), 16, 80);
+  const ringCount = clamp(Math.round(params.rings * spokeScale), 4, 18);
+  const stepCount = renderProfile.id === "low" ? 28 : renderProfile.id === "medium" ? 40 : 54;
+  const spin = getMotionAngle(params.spin * (0.72 + motionStrength * 0.16));
+  const bg = cssTone(toneShift(palette.bgA, 0, -18, -16), 0.98);
+  const haloCanvas = getCachedRenderCanvas(
+    makeRenderCacheKey(
+      "pinwheel-halo",
+      width,
+      height,
+      aperture.toFixed(2),
+      outer.toFixed(2),
+      paletteCacheKey(palette)
+    ),
+    width,
+    height,
+    (_, cacheCtx) => {
+      const halo = cacheCtx.createRadialGradient(cx, cy, aperture * 0.5, cx, cy, outer);
+      halo.addColorStop(0, cssTone(toneShift(palette.accents[0], 0, -10, 18), 0.16));
+      halo.addColorStop(0.58, cssTone(toneShift(palette.accents[2], 0, -18, 4), 0.07));
+      halo.addColorStop(1, cssTone(palette.bgA, 0));
+      cacheCtx.fillStyle = halo;
+      cacheCtx.fillRect(0, 0, width, height);
+    }
+  );
+  let visibleCount = 0;
+
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, width, height);
+  ctx.drawImage(haloCanvas, 0, 0, width, height);
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.lineCap = "round";
+
+  for (let layer = 0; layer < 2; layer += 1) {
+    const dir = layer === 0 ? 1 : -1;
+    const localCount = Math.max(12, Math.round(spokeCount * (layer === 0 ? 1 : 0.86)));
+    const localSpin = spin * dir * (layer === 0 ? 1 : 0.84);
+    const color =
+      layer === 0
+        ? cssTone(toneShift(palette.accents[0], 0, -6, 18), 0.46)
+        : cssTone(toneShift(palette.accents[2], 0, -16, 12), 0.34);
+    const widthScale = layer === 0 ? 1 : 0.86;
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth = params.lineWidth * widthScale;
+
+    for (let spoke = 0; spoke < localCount; spoke += 1) {
+      const baseTheta = (spoke / localCount) * TAU + localSpin;
+      ctx.beginPath();
+      for (let step = 0; step <= stepCount; step += 1) {
+        const t = step / stepCount;
+        const radius = aperture + (outer - aperture) * t;
+        const twist = dir * params.spiralTurn * t * TAU;
+        const ripple =
+          Math.sin(t * ringCount * TAU + spoke * 0.22 + spin * (layer === 0 ? 0.62 : 0.46)) *
+          params.wobble;
+        const theta = baseTheta + twist + ripple;
+        const x = Math.cos(theta) * radius;
+        const y = Math.sin(theta) * radius;
+        if (step === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+      ctx.stroke();
+      visibleCount += 1;
+    }
+  }
+
+  ctx.strokeStyle = cssTone(toneShift(palette.ink, 0, -18, -8), 0.18);
+  ctx.lineWidth = Math.max(0.8, params.lineWidth * 0.68);
+  for (let ring = 1; ring <= ringCount; ring += 1) {
+    const radius = aperture + ((outer - aperture) * ring) / (ringCount + 1);
+    ctx.beginPath();
+    ctx.arc(0, 0, radius, 0, TAU);
+    ctx.stroke();
+    visibleCount += 1;
+  }
+
+  ctx.restore();
+  recordVisibleInstances("spiral_moire_pinwheel", visibleCount);
 }
 
 function drawRippleTunnelMesh(ctx, width, height, params, palette, time) {
@@ -5379,7 +5892,8 @@ function drawHeringWarp(ctx, width, height, params, palette, time) {
 }
 
 function drawMullerLyerField(ctx, width, height, params, palette, time) {
-  const rows = params.rows;
+  const renderProfile = getRuntimeRenderProfile();
+  const rows = scaleDiscreteCount(params.rows, renderProfile.countScale, 4, 24);
   const usableTop = height * 0.12;
   const usableBottom = height * 0.88;
   const rowGap = (usableBottom - usableTop) / Math.max(1, rows - 1);
@@ -5388,6 +5902,9 @@ function drawMullerLyerField(ctx, width, height, params, palette, time) {
   const half = lineLength * 0.5;
   const arrowLen = Math.max(6, Math.min(width, height) * params.arrowLength);
   const lineAngle = params.rowSlope;
+  const driftFast = getMotionAngle(params.drift * 2.2);
+  const driftSlow = getMotionAngle(params.drift);
+  let visibleCount = 0;
 
   function drawWings(x, y, baseAngle, wingAngle, length, tone) {
     ctx.strokeStyle = tone;
@@ -5403,7 +5920,7 @@ function drawMullerLyerField(ctx, width, height, params, palette, time) {
 
   for (let row = 0; row < rows; row += 1) {
     const t = row / Math.max(1, rows - 1);
-    const y = usableTop + rowGap * row + Math.sin(row * 0.64 + getMotionAngle(params.drift * 2.2)) * rowGap * 0.12;
+    const y = usableTop + rowGap * row + Math.sin(row * 0.64 + driftFast) * rowGap * 0.12;
     const dy = Math.sin(lineAngle) * half;
     const x1 = centerX - half;
     const y1 = y - dy;
@@ -5421,13 +5938,17 @@ function drawMullerLyerField(ctx, width, height, params, palette, time) {
     const axis = Math.atan2(y2 - y1, x2 - x1);
     const leftBase = outward ? axis + Math.PI : axis;
     const rightBase = outward ? axis : axis + Math.PI;
-    const localAngle = params.wingAngle + Math.sin(t * TAU + getMotionAngle(params.drift)) * 0.05;
+    const localAngle = params.wingAngle + Math.sin(t * TAU + driftSlow) * 0.05;
     drawWings(x1, y1, leftBase, localAngle, arrowLen, tone);
     drawWings(x2, y2, rightBase, localAngle, arrowLen, tone);
+    visibleCount += 3;
   }
+
+  recordVisibleInstances("muller_lyer_field", visibleCount);
 }
 
 function drawPonzoCorridor(ctx, width, height, params, palette, time) {
+  const renderProfile = getRuntimeRenderProfile();
   const horizonY = height * params.horizonY;
   const centerX = width * 0.5;
   const bottomY = height * 0.96;
@@ -5438,7 +5959,9 @@ function drawPonzoCorridor(ctx, width, height, params, palette, time) {
   const vanishY = horizonY - height * 0.06;
   const vanishX = centerX + Math.sin(getMotionAngle(params.drift * 0.42)) * width * 0.01;
   const barTravel = (bottomY - horizonY) * 0.88;
-  const barStep = barTravel > 0.000001 ? (params.barCount > 1 ? barTravel / (params.barCount - 1) : barTravel) : height + 1;
+  const railCount = scaleDiscreteCount(params.railCount, renderProfile.countScale, 4, 18);
+  const barCount = scaleDiscreteCount(params.barCount, renderProfile.countScale, 3, 24);
+  const barStep = barTravel > 0.000001 ? (barCount > 1 ? barTravel / (barCount - 1) : barTravel) : height + 1;
   const barOffset = bottomY - barTravel;
   const barLength = width * params.barWidth;
   const barThickness = Math.max(2, Math.min(width, height) * 0.006);
@@ -5449,8 +5972,8 @@ function drawPonzoCorridor(ctx, width, height, params, palette, time) {
   ctx.lineCap = "round";
   ctx.lineWidth = Math.max(1, Math.min(width, height) * 0.0025);
 
-  for (let railIndex = 0; railIndex < params.railCount; railIndex += 1) {
-    const t = params.railCount > 1 ? railIndex / (params.railCount - 1) : 0.5;
+  for (let railIndex = 0; railIndex < railCount; railIndex += 1) {
+    const t = railCount > 1 ? railIndex / (railCount - 1) : 0.5;
     const p = t - 0.5;
     const wobble = Math.sin(railIndex * 0.52 + railPhase) * width * 0.006;
     const startX = centerX + p * bottomRailSpread * 2 + wobble;
@@ -5486,12 +6009,14 @@ function drawPonzoCorridor(ctx, width, height, params, palette, time) {
 }
 
 function drawPoggendorffCut(ctx, width, height, params, palette, time) {
-  const stripTotal = params.strips;
+  const renderProfile = getRuntimeRenderProfile();
+  const stripTotal = scaleDiscreteCount(params.strips, renderProfile.countScale, 2, 10);
   const stripW = width * params.stripWidth;
   const stripGap = width / (stripTotal + 1);
   const tanA = Math.tan(params.angle);
   const drift = Math.sin(getMotionAngle(params.drift * 3.1)) * height * 0.018;
   const lineWidth = Math.max(1.8, Math.min(width, height) * 0.003);
+  const lineCount = scaleDiscreteCount(params.lineCount, renderProfile.detailScale, 4, 24);
   let visibleCount = 0;
 
   forEachVisibleLinearIndex(
@@ -5505,8 +6030,8 @@ function drawPoggendorffCut(ctx, width, height, params, palette, time) {
     (stripIndex, stripX) => {
       const stripCenter = stripX + stripW * 0.5;
 
-      for (let i = 0; i < params.lineCount; i += 1) {
-        const yBase = ((i + 0.5) / params.lineCount) * height + Math.sin(i * 1.24 + stripIndex) * height * params.jitter;
+      for (let i = 0; i < lineCount; i += 1) {
+        const yBase = ((i + 0.5) / lineCount) * height + Math.sin(i * 1.24 + stripIndex) * height * params.jitter;
         const shift = (i % 2 === 0 ? 1 : -1) * stripW * 0.22 + drift;
         const yLeftAtStrip = yBase + (stripX - stripCenter) * tanA;
         const yRightAtStrip = yBase + (stripX + stripW - stripCenter) * tanA + shift;
@@ -5538,47 +6063,43 @@ function drawPoggendorffCut(ctx, width, height, params, palette, time) {
 }
 
 function drawWhiteLightness(ctx, width, height, params, palette, time) {
+  const renderProfile = getRuntimeRenderProfile();
   const span = Math.hypot(width, height);
-  const stripeWidth = (span * 2.2) / params.stripeCount;
+  const stripeCount = scaleDiscreteCount(params.stripeCount, renderProfile.countScale, 4, 28);
+  const patchRows = scaleDiscreteCount(params.patchRows, renderProfile.patchScale, 2, 12);
+  const patchCols = scaleDiscreteCount(params.patchCols, renderProfile.patchScale, 2, 10);
+  const stripeWidth = (span * 2.2) / stripeCount;
   const dark = cssTone(toneShift(palette.bgA, 0, -12, -14), 0.95);
   const light = cssTone(toneShift(palette.ink, 0, -24, 10), 0.9);
   const patchTone = cssTone(makeTone(palette.baseHue, 5, 56), 0.95);
   const patchStroke = cssTone(toneShift(palette.bgA, 0, -18, -20), 0.45);
   const patchW = Math.max(10, width * params.patchScale * 0.48);
   const patchH = Math.max(8, height * params.patchScale * 0.32);
-  const rowGap = height / (params.patchRows + 1);
+  const rowGap = height / (patchRows + 1);
   const colGap = width * 0.18;
   const topY = -height * 0.5;
   const driftPhase = getMotionAngle(params.drift);
   const rowDriftPhase = getMotionAngle(params.drift * 2.7);
+  const stripePattern = ctx.createPattern(getAlternatingBandPatternCanvas(stripeWidth, dark, light), "repeat");
   let visibleCount = 0;
 
   ctx.save();
   ctx.translate(width * 0.5, height * 0.5);
   ctx.rotate(params.stripeAngle);
 
-  forEachVisibleLinearIndex(
-    {
-      viewportStart: -span,
-      viewportEnd: span,
-      stepPx: stripeWidth,
-      offsetPx: -span,
-      overscanSteps: 1,
-    },
-    (index, y) => {
-      ctx.fillStyle = index % 2 === 0 ? dark : light;
-      ctx.fillRect(-span, y, span * 2, stripeWidth + 1);
-      visibleCount += 1;
-    }
-  );
+  if (stripePattern) {
+    ctx.fillStyle = stripePattern;
+    ctx.fillRect(-span, -span, span * 2, span * 2);
+    visibleCount += Math.max(1, Math.ceil((span * 2) / Math.max(1, stripeWidth)));
+  }
 
-  for (let row = 0; row < params.patchRows; row += 1) {
+  for (let row = 0; row < patchRows; row += 1) {
     const y =
       topY +
       rowGap * (row + 1) +
       Math.sin(row * 0.78 + rowDriftPhase) * rowGap * params.jitter;
-    for (let col = 0; col < params.patchCols; col += 1) {
-      const centerOffset = (col - (params.patchCols - 1) * 0.5) * colGap;
+    for (let col = 0; col < patchCols; col += 1) {
+      const centerOffset = (col - (patchCols - 1) * 0.5) * colGap;
       const phaseShift = (col % 2 === 0 ? 0 : stripeWidth * 0.5) + Math.cos(driftPhase + row) * stripeWidth * 0.08;
       const x = centerOffset - patchW * 0.5;
       const yShifted = y + phaseShift;
