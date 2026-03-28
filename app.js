@@ -51,6 +51,49 @@ const APP_MODE_COMPOSER = "composer";
 const DEFAULT_COMPOSER_MENU_WIDTH = 980;
 const MAIN_CANVAS_MAX_PIXELS = 4_000_000;
 const COMPOSER_PREVIEW_MAX_PIXELS = 1_500_000;
+const MAX_RENDER_CACHE_ENTRIES = 40;
+const LOW_RENDER_PROFILE = {
+  id: "low",
+  maxLayers: 3,
+  sceneCostBase: 2.6,
+  sceneCostPerComplexity: 0.26,
+  waveStep: 16,
+  minWaveSpacing: 12,
+  gridIntersectionBudget: 700,
+  checkerCellBudget: 120,
+  rippleSpokeScale: 0.62,
+  rippleSliceScale: 0.68,
+  rippleSegmentScale: 0.62,
+  troxlerBlobScale: 0.58,
+};
+const MEDIUM_RENDER_PROFILE = {
+  id: "medium",
+  maxLayers: 4,
+  sceneCostBase: 3.4,
+  sceneCostPerComplexity: 0.34,
+  waveStep: 13,
+  minWaveSpacing: 10,
+  gridIntersectionBudget: 980,
+  checkerCellBudget: 150,
+  rippleSpokeScale: 0.82,
+  rippleSliceScale: 0.86,
+  rippleSegmentScale: 0.82,
+  troxlerBlobScale: 0.8,
+};
+const HIGH_RENDER_PROFILE = {
+  id: "high",
+  maxLayers: 6,
+  sceneCostBase: 4.8,
+  sceneCostPerComplexity: 0.42,
+  waveStep: 10,
+  minWaveSpacing: 8,
+  gridIntersectionBudget: 1600,
+  checkerCellBudget: 220,
+  rippleSpokeScale: 1,
+  rippleSliceScale: 1,
+  rippleSegmentScale: 1,
+  troxlerBlobScale: 1,
+};
 
 const viewerEl = document.getElementById("viewer");
 const canvas = document.getElementById("illusionCanvas");
@@ -619,6 +662,10 @@ const composerBlendModes = [
 ];
 const composerBlendModeValues = new Set(composerBlendModes.map((mode) => mode.value));
 let activeRenderMotion = null;
+const renderAssetCache = new Map();
+let renderAssetClock = 0;
+let runtimeRenderProfileCacheKey = "";
+let runtimeRenderProfileCacheValue = HIGH_RENDER_PROFILE;
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -633,6 +680,211 @@ function getComposerMenuWidthBounds() {
 function clampComposerMenuWidth(width) {
   const { minWidth, maxWidth } = getComposerMenuWidthBounds();
   return clamp(width, minWidth, maxWidth);
+}
+
+function getRuntimeRenderProfile() {
+  const shortEdge = Math.min(window.innerWidth || COMPOSITION_WIDTH, window.innerHeight || COMPOSITION_HEIGHT);
+  const longEdge = Math.max(window.innerWidth || COMPOSITION_WIDTH, window.innerHeight || COMPOSITION_HEIGHT);
+  const coarsePointer =
+    typeof window.matchMedia === "function"
+      ? window.matchMedia("(pointer: coarse)").matches
+      : false;
+  const deviceMemory = Number(navigator.deviceMemory) || 4;
+  const cores = Number(navigator.hardwareConcurrency) || 4;
+  const cacheKey = [
+    shortEdge,
+    longEdge,
+    coarsePointer ? 1 : 0,
+    Math.round(deviceMemory * 10),
+    cores,
+  ].join("|");
+
+  if (runtimeRenderProfileCacheKey === cacheKey) {
+    return runtimeRenderProfileCacheValue;
+  }
+
+  const likelyPhone = coarsePointer && shortEdge <= MOBILE_VIEWPORT_MAX;
+  const lowPower = deviceMemory <= 4 || cores <= 4;
+  const midPower = deviceMemory <= 6 || cores <= 6;
+
+  if (likelyPhone && lowPower) {
+    runtimeRenderProfileCacheKey = cacheKey;
+    runtimeRenderProfileCacheValue = LOW_RENDER_PROFILE;
+    return runtimeRenderProfileCacheValue;
+  }
+
+  if (likelyPhone || (coarsePointer && shortEdge <= 1180) || midPower) {
+    runtimeRenderProfileCacheKey = cacheKey;
+    runtimeRenderProfileCacheValue = MEDIUM_RENDER_PROFILE;
+    return runtimeRenderProfileCacheValue;
+  }
+
+  runtimeRenderProfileCacheKey = cacheKey;
+  runtimeRenderProfileCacheValue = HIGH_RENDER_PROFILE;
+  return runtimeRenderProfileCacheValue;
+}
+
+function makeRenderCacheKey(...parts) {
+  return parts.join("|");
+}
+
+function toneCacheKey(tone) {
+  if (!tone) {
+    return "tone:none";
+  }
+  return `${tone.h.toFixed(2)},${tone.s.toFixed(2)},${tone.l.toFixed(2)}`;
+}
+
+function paletteCacheKey(palette) {
+  return [
+    toneCacheKey(palette?.bgA),
+    toneCacheKey(palette?.bgB),
+    toneCacheKey(palette?.ink),
+    ...(Array.isArray(palette?.accents) ? palette.accents.map(toneCacheKey) : []),
+  ].join("|");
+}
+
+function trimRenderAssetCache() {
+  if (renderAssetCache.size <= MAX_RENDER_CACHE_ENTRIES) {
+    return;
+  }
+
+  const entries = Array.from(renderAssetCache.entries()).sort(
+    (a, b) => (a[1]?.lastUsed || 0) - (b[1]?.lastUsed || 0)
+  );
+  for (let index = 0; index < entries.length - MAX_RENDER_CACHE_ENTRIES; index += 1) {
+    renderAssetCache.delete(entries[index][0]);
+  }
+}
+
+function createRenderCacheCanvas(width, height) {
+  const target = document.createElement("canvas");
+  target.width = Math.max(1, Math.round(width));
+  target.height = Math.max(1, Math.round(height));
+  return target;
+}
+
+function getCachedRenderCanvas(cacheKey, width, height, draw) {
+  const canvasWidth = Math.max(1, Math.round(width));
+  const canvasHeight = Math.max(1, Math.round(height));
+  let entry = renderAssetCache.get(cacheKey);
+
+  if (!entry || entry.canvas.width !== canvasWidth || entry.canvas.height !== canvasHeight) {
+    const cacheCanvas = createRenderCacheCanvas(canvasWidth, canvasHeight);
+    const cacheCtx = cacheCanvas.getContext("2d");
+    draw(cacheCanvas, cacheCtx);
+    entry = { canvas: cacheCanvas, lastUsed: 0 };
+    renderAssetCache.set(cacheKey, entry);
+    trimRenderAssetCache();
+  }
+
+  entry.lastUsed = ++renderAssetClock;
+  return entry.canvas;
+}
+
+function clampGridToBudget(rows, cols, maxCells) {
+  const safeRows = Math.max(2, Math.round(rows));
+  const safeCols = Math.max(2, Math.round(cols));
+  const totalCells = safeRows * safeCols;
+  if (totalCells <= maxCells) {
+    return { rows: safeRows, cols: safeCols };
+  }
+
+  const scale = Math.sqrt(maxCells / Math.max(1, totalCells));
+  return {
+    rows: Math.max(2, Math.round(safeRows * scale)),
+    cols: Math.max(2, Math.round(safeCols * scale)),
+  };
+}
+
+function estimateLayerRenderCost(layer) {
+  const params = layer?.params || {};
+  switch (layer?.principleId) {
+    case "ripple_tunnel_mesh":
+      return 1.8 + (Number(params.slices) || 0) * 0.04 + (Number(params.spokes) || 0) * 0.022;
+    case "troxler_field":
+      return 1.1 + (Number(params.blobs) || 0) * 0.028;
+    case "scintillating_grid":
+      return 1 + ((Number(params.rows) || 0) * (Number(params.cols) || 0)) / 220;
+    case "bulging_checkerboard":
+      return 1.2 + ((Number(params.rows) || 0) * (Number(params.cols) || 0)) / 120;
+    case "caustic_wave_mesh":
+      return 1.5 + 12 / Math.max(6, Number(params.spacing) || 12);
+    case "moire_field":
+      return 1.35 + 10 / Math.max(6, Number(params.spacing) || 10);
+    case "barber_pole_shear":
+      return 1.45 + (Number(params.bands) || 0) * 0.22;
+    case "pinna_brelstaff":
+      return 1.2 + (Number(params.rings) || 0) * 0.08 + (Number(params.wedges) || 0) * 0.015;
+    case "peripheral_drift":
+      return 1.15 + (Number(params.rings) || 0) * 0.07 + (Number(params.segments) || 0) * 0.012;
+    case "cafe_wall":
+      return 1 + ((Number(params.rows) || 0) * (Number(params.cols) || 0)) / 260;
+    default:
+      return researchById[layer?.principleId]?.fullScreenMotion ? 1.2 : 0.9;
+  }
+}
+
+function getSceneRenderCostBudget(options = state.options) {
+  const profile = getRuntimeRenderProfile();
+  return profile.sceneCostBase + options.complexity * profile.sceneCostPerComplexity;
+}
+
+function trimLayersToRenderBudget(layers, options = state.options, pinnedPrincipleId = null) {
+  if (!Array.isArray(layers) || !layers.length) {
+    return [];
+  }
+
+  const profile = getRuntimeRenderProfile();
+  const minLayers = Math.min(
+    layers.length,
+    Math.max(2, options.complexity >= 7 ? 3 : 2)
+  );
+  const maxLayers = Math.max(minLayers, Math.min(layers.length, profile.maxLayers));
+  const trimmed = [...layers];
+
+  function removeHighestCostLayer() {
+    let bestIndex = -1;
+    let bestScore = -Infinity;
+
+    for (let index = 0; index < trimmed.length; index += 1) {
+      const layer = trimmed[index];
+      if (pinnedPrincipleId && layer.principleId === pinnedPrincipleId) {
+        continue;
+      }
+      const cost = estimateLayerRenderCost(layer);
+      const alphaWeight = 0.92 + (Number(layer.alpha) || 0.6) * 0.35;
+      const score = cost * alphaWeight;
+      if (score > bestScore) {
+        bestScore = score;
+        bestIndex = index;
+      }
+    }
+
+    if (bestIndex >= 0) {
+      trimmed.splice(bestIndex, 1);
+      return true;
+    }
+    return false;
+  }
+
+  while (trimmed.length > maxLayers) {
+    if (!removeHighestCostLayer()) {
+      break;
+    }
+  }
+
+  let totalCost = trimmed.reduce((sum, layer) => sum + estimateLayerRenderCost(layer), 0);
+  const budget = getSceneRenderCostBudget(options);
+
+  while (trimmed.length > minLayers && totalCost > budget) {
+    if (!removeHighestCostLayer()) {
+      break;
+    }
+    totalCost = trimmed.reduce((sum, layer) => sum + estimateLayerRenderCost(layer), 0);
+  }
+
+  return trimmed;
 }
 
 function wrapHue(h) {
@@ -2135,8 +2387,12 @@ function buildIllusion(seed, parentId = null, forcedPrincipleId = null) {
   const rng = new SeedRng(seed);
   const palette = makePalette(rng);
   const enabledPrinciples = getEnabledPrinciples();
+  const renderProfile = getRuntimeRenderProfile();
   const minLayers = state.options.complexity >= 7 ? 3 : 2;
-  const maxLayers = clamp(2 + Math.round(state.options.complexity * 0.56), 3, 8);
+  const maxLayers = Math.min(
+    renderProfile.maxLayers,
+    clamp(2 + Math.round(state.options.complexity * 0.56), 3, 8)
+  );
   const layerCount = rng.int(minLayers, Math.max(minLayers, maxLayers));
   const minUniqueTarget = Math.min(enabledPrinciples.length, Math.min(layerCount, state.options.complexity >= 6 ? 3 : 2));
   const maxUniqueTarget = Math.min(enabledPrinciples.length, layerCount, clamp(2 + Math.floor(state.options.complexity / 3), 2, 5));
@@ -2173,8 +2429,9 @@ function buildIllusion(seed, parentId = null, forcedPrincipleId = null) {
     layers.push(sampleLayer(principleId, rng, state.options));
   }
 
-  const normalizedLayers = normalizeGeneratedLayers(layers, rng);
-  const principles = Array.from(new Set(picked));
+  const budgetTrimmedLayers = trimLayersToRenderBudget(layers, state.options, validForcedPrinciple);
+  const normalizedLayers = normalizeGeneratedLayers(budgetTrimmedLayers, rng);
+  const principles = Array.from(new Set(normalizedLayers.map((layer) => layer.principleId)));
   const fixationAid = needsFixationAid(principles) ? makeFixationAid(rng) : null;
 
   const illusion = {
@@ -3273,40 +3530,48 @@ function resizeComposerPreviewCanvas() {
 }
 
 function drawBackground(ctx, width, height, palette) {
-  const gradient = ctx.createLinearGradient(0, 0, width, height);
-  gradient.addColorStop(0, cssTone(palette.bgA));
-  gradient.addColorStop(1, cssTone(palette.bgB));
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, width, height);
+  const cacheKey = makeRenderCacheKey("scene-bg", width, height, paletteCacheKey(palette));
+  const backgroundCanvas = getCachedRenderCanvas(cacheKey, width, height, (_, cacheCtx) => {
+    const gradient = cacheCtx.createLinearGradient(0, 0, width, height);
+    gradient.addColorStop(0, cssTone(palette.bgA));
+    gradient.addColorStop(1, cssTone(palette.bgB));
+    cacheCtx.fillStyle = gradient;
+    cacheCtx.fillRect(0, 0, width, height);
 
-  const halo = ctx.createRadialGradient(
-    width * 0.52,
-    height * 0.46,
-    width * 0.08,
-    width * 0.52,
-    height * 0.46,
-    width * 0.86
-  );
-  halo.addColorStop(0, cssTone(toneShift(palette.accents[0], 0, 0, 12), 0.15));
-  halo.addColorStop(0.6, cssTone(toneShift(palette.accents[2], 8, 0, -6), 0.09));
-  halo.addColorStop(1, cssTone(palette.bgA, 0));
-  ctx.fillStyle = halo;
-  ctx.fillRect(0, 0, width, height);
+    const halo = cacheCtx.createRadialGradient(
+      width * 0.52,
+      height * 0.46,
+      width * 0.08,
+      width * 0.52,
+      height * 0.46,
+      width * 0.86
+    );
+    halo.addColorStop(0, cssTone(toneShift(palette.accents[0], 0, 0, 12), 0.15));
+    halo.addColorStop(0.6, cssTone(toneShift(palette.accents[2], 8, 0, -6), 0.09));
+    halo.addColorStop(1, cssTone(palette.bgA, 0));
+    cacheCtx.fillStyle = halo;
+    cacheCtx.fillRect(0, 0, width, height);
+  });
+  ctx.drawImage(backgroundCanvas, 0, 0, width, height);
 }
 
 function drawVignette(ctx, width, height, palette) {
-  const v = ctx.createRadialGradient(
-    width * 0.5,
-    height * 0.5,
-    Math.min(width, height) * 0.15,
-    width * 0.5,
-    height * 0.5,
-    Math.max(width, height) * 0.8
-  );
-  v.addColorStop(0, cssTone(palette.bgA, 0));
-  v.addColorStop(1, cssTone(toneShift(palette.bgA, 0, 8, -12), 0.38));
-  ctx.fillStyle = v;
-  ctx.fillRect(0, 0, width, height);
+  const cacheKey = makeRenderCacheKey("scene-vignette", width, height, paletteCacheKey(palette));
+  const vignetteCanvas = getCachedRenderCanvas(cacheKey, width, height, (_, cacheCtx) => {
+    const vignette = cacheCtx.createRadialGradient(
+      width * 0.5,
+      height * 0.5,
+      Math.min(width, height) * 0.15,
+      width * 0.5,
+      height * 0.5,
+      Math.max(width, height) * 0.8
+    );
+    vignette.addColorStop(0, cssTone(palette.bgA, 0));
+    vignette.addColorStop(1, cssTone(toneShift(palette.bgA, 0, 8, -12), 0.38));
+    cacheCtx.fillStyle = vignette;
+    cacheCtx.fillRect(0, 0, width, height);
+  });
+  ctx.drawImage(vignetteCanvas, 0, 0, width, height);
 }
 
 function drawFixationGlyph(ctx, width, height, palette, scale = 1) {
@@ -3800,6 +4065,7 @@ function drawCustomCheckerVeil(ctx, width, height, layer, scheme, time) {
 }
 
 function drawWaveSet(ctx, width, height, config) {
+  const renderProfile = getRuntimeRenderProfile();
   ctx.save();
   ctx.translate(width * 0.5, height * 0.5);
   ctx.rotate(config.angle);
@@ -3807,8 +4073,9 @@ function drawWaveSet(ctx, width, height, config) {
   ctx.strokeStyle = config.color;
   ctx.lineWidth = config.stroke;
 
-  const stepX = 10;
-  for (let y = -height; y < height * 2; y += config.spacing) {
+  const stepX = renderProfile.waveStep;
+  const effectiveSpacing = Math.max(config.spacing, renderProfile.minWaveSpacing);
+  for (let y = -height; y < height * 2; y += effectiveSpacing) {
     ctx.beginPath();
     for (let x = -width; x <= width * 2; x += stepX) {
       const wave = Math.sin(x * 0.01 * config.freq + config.phase) * config.amplitude;
@@ -3949,10 +4216,12 @@ function drawZollnerLines(ctx, width, height, params, palette) {
 }
 
 function drawBulgingCheckerboard(ctx, width, height, params, palette, time) {
+  const renderProfile = getRuntimeRenderProfile();
+  const boundedGrid = clampGridToBudget(params.rows, params.cols, renderProfile.checkerCellBudget);
   const cx = width * 0.5;
   const cy = height * 0.5;
-  const cellW = width / params.cols;
-  const cellH = height / params.rows;
+  const cellW = width / boundedGrid.cols;
+  const cellH = height / boundedGrid.rows;
   const overdraw = Math.max(cellW, cellH) * 3 + Math.hypot(width, height) * 0.1;
   const extraCols = Math.max(3, Math.ceil(overdraw / cellW));
   const extraRows = Math.max(3, Math.ceil(overdraw / cellH));
@@ -4027,11 +4296,15 @@ function drawBulgingCheckerboard(ctx, width, height, params, palette, time) {
 }
 
 function drawScintillatingGrid(ctx, width, height, params, palette, time, illusion) {
+  const renderProfile = getRuntimeRenderProfile();
   const minGap = Math.max(10, Math.min(width, height) * 0.012);
   const maxCols = Math.max(2, Math.floor(width / minGap) + 1);
   const maxRows = Math.max(2, Math.floor(height / minGap) + 1);
-  const cols = clamp(Math.max(2, Math.round(params.cols)), 2, maxCols);
-  const rows = clamp(Math.max(2, Math.round(params.rows)), 2, maxRows);
+  const rawCols = clamp(Math.max(2, Math.round(params.cols)), 2, maxCols);
+  const rawRows = clamp(Math.max(2, Math.round(params.rows)), 2, maxRows);
+  const boundedGrid = clampGridToBudget(rawRows, rawCols, renderProfile.gridIntersectionBudget);
+  const cols = boundedGrid.cols;
+  const rows = boundedGrid.rows;
   const span = Math.hypot(width, height);
   const gapX = (span * 2) / Math.max(1, cols - 1);
   const gapY = (span * 2) / Math.max(1, rows - 1);
@@ -4039,35 +4312,58 @@ function drawScintillatingGrid(ctx, width, height, params, palette, time, illusi
   const effectiveLineWidth = Math.max(0.8, Math.min(params.lineWidth, Math.min(gapX, gapY) * 0.22));
   const effectiveDotRadius = Math.max(1.2, Math.min(params.dotRadius, Math.min(gapX, gapY) * 0.34));
   const angle = params.angle || 0;
+  const baseGridCanvas = getCachedRenderCanvas(
+    makeRenderCacheKey(
+      "scint-grid-base",
+      width,
+      height,
+      rows,
+      cols,
+      effectiveLineWidth.toFixed(2),
+      angle.toFixed(4),
+      paletteCacheKey(palette)
+    ),
+    width,
+    height,
+    (_, cacheCtx) => {
+      cacheCtx.fillStyle = cssTone(toneShift(palette.bgA, 0, -18, -8), 0.82);
+      cacheCtx.fillRect(0, 0, width, height);
 
-  ctx.fillStyle = cssTone(toneShift(palette.bgA, 0, -18, -8), 0.82);
-  ctx.fillRect(0, 0, width, height);
+      cacheCtx.save();
+      cacheCtx.translate(width * 0.5, height * 0.5);
+      cacheCtx.rotate(angle);
+      cacheCtx.strokeStyle = cssTone(palette.ink, 0.75);
+      cacheCtx.lineWidth = effectiveLineWidth;
+
+      forEachVisibleLinearIndex(
+        { viewportStart: -span, viewportEnd: span, stepPx: gapX, offsetPx: -span, overscanSteps: 0 },
+        (_, x) => {
+          cacheCtx.beginPath();
+          cacheCtx.moveTo(x, -span);
+          cacheCtx.lineTo(x, span);
+          cacheCtx.stroke();
+        }
+      );
+
+      forEachVisibleLinearIndex(
+        { viewportStart: -span, viewportEnd: span, stepPx: gapY, offsetPx: -span, overscanSteps: 0 },
+        (_, y) => {
+          cacheCtx.beginPath();
+          cacheCtx.moveTo(-span, y);
+          cacheCtx.lineTo(span, y);
+          cacheCtx.stroke();
+        }
+      );
+
+      cacheCtx.restore();
+    }
+  );
+
+  ctx.drawImage(baseGridCanvas, 0, 0, width, height);
 
   ctx.save();
   ctx.translate(width * 0.5, height * 0.5);
   ctx.rotate(angle);
-  ctx.strokeStyle = cssTone(palette.ink, 0.75);
-  ctx.lineWidth = effectiveLineWidth;
-
-  forEachVisibleLinearIndex(
-    { viewportStart: -span, viewportEnd: span, stepPx: gapX, offsetPx: -span, overscanSteps: 0 },
-    (_, x) => {
-      ctx.beginPath();
-      ctx.moveTo(x, -span);
-      ctx.lineTo(x, span);
-      ctx.stroke();
-    }
-  );
-
-  forEachVisibleLinearIndex(
-    { viewportStart: -span, viewportEnd: span, stepPx: gapY, offsetPx: -span, overscanSteps: 0 },
-    (_, y) => {
-      ctx.beginPath();
-      ctx.moveTo(-span, y);
-      ctx.lineTo(span, y);
-      ctx.stroke();
-    }
-  );
 
   let visibleCount = 0;
   forEachVisibleLinearIndex(
@@ -4297,6 +4593,16 @@ function pathRoundedRect(ctx, x, y, width, height, radius) {
   ctx.closePath();
 }
 
+function getLinearStripePatternCanvas(step, lineWidth, stripeColor) {
+  const patternWidth = Math.max(2, roundToEven(step));
+  const key = makeRenderCacheKey("stripe-pattern", patternWidth, Math.round(lineWidth * 100), stripeColor);
+  return getCachedRenderCanvas(key, patternWidth, 32, (_, cacheCtx) => {
+    cacheCtx.clearRect(0, 0, patternWidth, 32);
+    cacheCtx.fillStyle = stripeColor;
+    cacheCtx.fillRect(0, 0, Math.min(patternWidth, Math.max(1, lineWidth)), 32);
+  });
+}
+
 function drawLinearStripeField(
   ctx,
   width,
@@ -4312,7 +4618,9 @@ function drawLinearStripeField(
   const span = Math.hypot(width, height);
   const step = Math.max(4, spacing);
   const lineWidth = Math.max(1.5, stripeWidth);
-  const scroll = getMotionShift(driftRate, step * 10);
+  const scroll = getWrappedOffset(step, getMotionShift(driftRate, step * 10));
+  const stripePattern = ctx.createPattern(getLinearStripePatternCanvas(step, lineWidth, stripeColor), "repeat");
+  const { start, end } = getVisibleIndexBounds(-span, span, step, -span + scroll, 2);
 
   ctx.save();
   ctx.translate(width * 0.5, height * 0.5);
@@ -4321,16 +4629,70 @@ function drawLinearStripeField(
   ctx.fillStyle = bgColor;
   ctx.fillRect(-span, -span, span * 2, span * 2);
 
-  ctx.fillStyle = stripeColor;
-  const visibleCount = forEachVisibleLinearIndex(
-    { viewportStart: -span, viewportEnd: span, stepPx: step, offsetPx: -span + scroll, overscanSteps: 2 },
-    (_, x) => {
-      ctx.fillRect(x, -span, lineWidth, span * 2);
-    }
-  );
+  if (stripePattern) {
+    ctx.save();
+    ctx.translate(scroll, 0);
+    ctx.fillStyle = stripePattern;
+    ctx.fillRect(-span - step * 2, -span, span * 2 + step * 4, span * 2);
+    ctx.restore();
+  } else {
+    ctx.fillStyle = stripeColor;
+    forEachVisibleLinearIndex(
+      { viewportStart: -span, viewportEnd: span, stepPx: step, offsetPx: -span + scroll, overscanSteps: 2 },
+      (_, x) => {
+        ctx.fillRect(x, -span, lineWidth, span * 2);
+      }
+    );
+  }
 
   ctx.restore();
-  return visibleCount;
+  return Math.max(0, end - start + 1);
+}
+
+function drawLinearStripePlane(
+  ctx,
+  width,
+  height,
+  spacing,
+  angle,
+  stripeWidth,
+  stripeColor,
+  backgroundColor = null,
+  driftRate = 0
+) {
+  const span = Math.hypot(width, height) * 1.2;
+  const step = Math.max(4, spacing);
+  const lineWidth = Math.max(1.5, stripeWidth);
+  const scroll = getWrappedOffset(step, getMotionShift(driftRate, step * 10, step, 1));
+  const stripePattern = ctx.createPattern(getLinearStripePatternCanvas(step, lineWidth, stripeColor), "repeat");
+  const { start, end } = getVisibleIndexBounds(-span, span, step, -span + scroll, 2);
+
+  ctx.save();
+  ctx.rotate(angle);
+
+  if (backgroundColor) {
+    ctx.fillStyle = backgroundColor;
+    ctx.fillRect(-span, -span, span * 2, span * 2);
+  }
+
+  if (stripePattern) {
+    ctx.save();
+    ctx.translate(scroll, 0);
+    ctx.fillStyle = stripePattern;
+    ctx.fillRect(-span - step * 2, -span, span * 2 + step * 4, span * 2);
+    ctx.restore();
+  } else {
+    ctx.fillStyle = stripeColor;
+    forEachVisibleLinearIndex(
+      { viewportStart: -span, viewportEnd: span, stepPx: step, offsetPx: -span + scroll, overscanSteps: 2 },
+      (_, x) => {
+        ctx.fillRect(x, -span, lineWidth, span * 2);
+      }
+    );
+  }
+
+  ctx.restore();
+  return Math.max(0, end - start + 1);
 }
 
 function drawStripeField(ctx, width, height, spacing, angle, stripeWidth, stripeColor, bgColor, driftRate = 0) {
@@ -4556,6 +4918,7 @@ function drawParallaxTileDrift(ctx, width, height, params, palette, time) {
 }
 
 function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion) {
+  const renderProfile = getRuntimeRenderProfile();
   const darkBase = toneShift(palette.bgA, 0, -24, -12);
   const backgroundLine = toneShift(palette.ink, 0, -22, -6);
   const slabFillBase = toneShift(palette.bgB, 0, -24, -10);
@@ -4563,7 +4926,7 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
   const pairASecondary = toneShift(palette.accents[2], 0, -2, 6);
   const pairBPrimary = toneShift(palette.accents[1], 0, 4, 8);
   const pairBSecondary = toneShift(palette.accents[3], 0, -4, 10);
-  let visibleCount = drawStripeField(
+  let visibleCount = drawLinearStripeField(
     ctx,
     width,
     height,
@@ -4590,17 +4953,37 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
   const projectedNormalSpan = Math.abs(normalX) * width + Math.abs(normalY) * height + baseSlabH * 4;
   const laneGroupHint = Math.max(1, Math.ceil(projectedNormalSpan / Math.max(1, patternPeriod)) + 2);
   const slabRadius = span * 0.7 + baseSlabH * (1 + params.depthPulse) * 1.8;
+  const laneTravel = getMotionShift(
+    params.slabTravel * (0.42 + illusion.motionStrength * 0.18),
+    patternPeriod * 0.68,
+    patternPeriod,
+    1
+  );
+  const motionPhase = getMotionAngle(params.slabTravel * (0.24 + illusion.motionStrength * 0.08));
+  const ghostCount = renderProfile.id === "high" ? params.ghosts : Math.min(1, params.ghosts);
 
   forEachVisibleLane(
-    { laneStep: patternPeriod, travelPx: 0, overscanLanes: 1, laneCountHint: laneGroupHint },
-    (_groupIndex, laneOrigin) => {
+    { laneStep: patternPeriod, travelPx: laneTravel, overscanLanes: 2, laneCountHint: laneGroupHint },
+    (groupIndex, laneOrigin) => {
       for (let i = 0; i < params.bands; i += 1) {
         const direction = i % 2 === 0 ? 1 : -1;
-        const motionPhase =
-          getMotionAngle(params.slabTravel * (0.42 + illusion.motionStrength * 0.18)) + i * 1.05;
-        const bob = Math.sin(motionPhase) * height * params.slabBob * direction;
-        const sway = Math.cos(motionPhase * 0.78 + i * 0.33) * width * params.slabSway * direction;
-        const depthScale = 1 + Math.cos(motionPhase * 0.92 + i * 0.4) * params.depthPulse;
+        const worldLaneOrigin = groupIndex * patternPeriod + laneTravel;
+        const lanePhase = worldLaneOrigin / Math.max(1, patternPeriod);
+        const laneMotion = lanePhase * TAU;
+        const bob =
+          Math.sin(laneMotion * 0.26 + motionPhase * 0.72 + i * 0.6) *
+          height *
+          params.slabBob *
+          0.55 *
+          direction;
+        const sway =
+          Math.cos(laneMotion * 0.18 + motionPhase * 0.54 + i * 0.33) *
+          width *
+          params.slabSway *
+          0.6 *
+          direction;
+        const depthScale =
+          1 + Math.cos(laneMotion * 0.22 + motionPhase * 0.82 + i * 0.4) * params.depthPulse * 0.82;
         const slabH = baseSlabH * depthScale;
         const laneOffset = laneOrigin + lanePattern[i] * laneStep;
         const cx = centerX + normalX * laneOffset + sway;
@@ -4631,7 +5014,7 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
         ctx.rotate(angle);
         ctx.scale(depthScale, depthScale);
 
-        for (let ghost = params.ghosts; ghost >= 1; ghost -= 1) {
+        for (let ghost = ghostCount; ghost >= 1; ghost -= 1) {
           const ghostOffset = ghost * span * 0.05 * direction;
           pathRoundedRect(ctx, -slabW * 0.5 + ghostOffset, -slabH * 0.5, slabW, slabH, corner);
           ctx.strokeStyle = cssTone(rimTone, 0.06);
@@ -4642,7 +5025,7 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
         pathRoundedRect(ctx, -slabW * 0.5, -slabH * 0.5, slabW, slabH, corner);
         ctx.save();
         ctx.clip();
-        visibleCount += drawStripePlane(
+        visibleCount += drawLinearStripePlane(
           ctx,
           slabW,
           slabH,
@@ -4653,7 +5036,7 @@ function drawBarberPoleShear(ctx, width, height, params, palette, time, illusion
           cssTone(slabFill, 0.46),
           primaryStripeDrift
         );
-        visibleCount += drawStripePlane(
+        visibleCount += drawLinearStripePlane(
           ctx,
           slabW,
           slabH,
@@ -4813,43 +5196,61 @@ function drawMachBands(ctx, width, height, params, palette, time) {
 }
 
 function drawTroxlerField(ctx, width, height, params, palette, time) {
+  const renderProfile = getRuntimeRenderProfile();
   const cx = width * 0.5;
   const cy = height * 0.5;
   const minDim = Math.min(width, height);
   const ringRadius = minDim * params.ringRadius;
   const spread = minDim * params.spread;
+  const blobCount = Math.max(12, Math.min(params.blobs, Math.round(params.blobs * renderProfile.troxlerBlobScale)));
+
+  function getTroxlerBlobSprite(size, tone, alpha) {
+    const diameter = Math.max(16, roundToEven(size * 2));
+    const inner = cssTone(toneShift(tone, 0, -15, 2), alpha);
+    const outer = cssTone(toneShift(tone, 0, -22, -2), 0);
+    const cacheKey = makeRenderCacheKey("troxler-blob", diameter, inner, outer);
+    return getCachedRenderCanvas(cacheKey, diameter, diameter, (_, cacheCtx) => {
+      const radius = diameter * 0.5;
+      const gradient = cacheCtx.createRadialGradient(radius, radius, radius * 0.05, radius, radius, radius);
+      gradient.addColorStop(0, inner);
+      gradient.addColorStop(1, outer);
+      cacheCtx.fillStyle = gradient;
+      cacheCtx.beginPath();
+      cacheCtx.arc(radius, radius, radius, 0, TAU);
+      cacheCtx.fill();
+    });
+  }
 
   ctx.fillStyle = cssTone(toneShift(palette.bgB, 0, -14, -2), 0.98);
   ctx.fillRect(0, 0, width, height);
 
-  for (let i = 0; i < params.blobs; i += 1) {
+  for (let i = 0; i < blobCount; i += 1) {
     const noiseA = Math.sin(i * 7.91) * 0.5 + 0.5;
     const noiseB = Math.cos(i * 11.17) * 0.5 + 0.5;
-    const theta = (i / params.blobs) * TAU + getMotionAngle(params.drift * (0.4 + noiseA));
+    const theta = (i / blobCount) * TAU + getMotionAngle(params.drift * (0.4 + noiseA));
     const radius = ringRadius + (noiseB - 0.5) * spread;
     const x = cx + Math.cos(theta) * radius;
     const y = cy + Math.sin(theta) * radius;
     const size = params.blobSize * (0.58 + noiseA * 0.9);
     const alpha = 0.05 + (1 - params.softness) * 0.16;
     const tone = palette.accents[i % palette.accents.length];
-
-    const gradient = ctx.createRadialGradient(x, y, size * 0.05, x, y, size);
-    gradient.addColorStop(0, cssTone(toneShift(tone, 0, -15, 2), alpha));
-    gradient.addColorStop(1, cssTone(toneShift(tone, 0, -22, -2), 0));
-    ctx.fillStyle = gradient;
-    ctx.beginPath();
-    ctx.arc(x, y, size, 0, TAU);
-    ctx.fill();
+    const sprite = getTroxlerBlobSprite(size, tone, alpha);
+    ctx.drawImage(sprite, x - size, y - size, size * 2, size * 2);
   }
+
+  recordVisibleInstances("troxler_field", blobCount);
 }
 
 function drawRippleTunnelMesh(ctx, width, height, params, palette, time) {
+  const renderProfile = getRuntimeRenderProfile();
   const cx = width * 0.5;
   const cy = height * 0.5;
   const minDim = Math.min(width, height);
   const outer = Math.hypot(width, height) * 0.68;
   const aperture = minDim * params.aperture;
   const inkOpacity = clamp(Number.isFinite(params.inkOpacity) ? params.inkOpacity : 1, 0.6, 2.2);
+  const spokeCount = Math.max(12, Math.min(params.spokes, Math.round(params.spokes * renderProfile.rippleSpokeScale)));
+  const sliceCount = Math.max(10, Math.min(params.slices, Math.round(params.slices * renderProfile.rippleSliceScale)));
   const flowTurns = ((getMotionAngle(params.flow) / TAU) % 1 + 1) % 1;
   const spin = getMotionAngle(params.spin);
   const drift = getMotionAngle(params.vanishDrift);
@@ -4867,8 +5268,8 @@ function drawRippleTunnelMesh(ctx, width, height, params, palette, time) {
   ctx.fillRect(0, 0, width, height);
 
   ctx.lineCap = "round";
-  for (let spoke = 0; spoke < params.spokes; spoke += 1) {
-    const theta = (spoke / params.spokes) * TAU + spin;
+  for (let spoke = 0; spoke < spokeCount; spoke += 1) {
+    const theta = (spoke / spokeCount) * TAU + spin;
     const outerX = vanishX + Math.cos(theta) * outer;
     const outerY = vanishY + Math.sin(theta) * outer * params.squash;
     const sway = Math.sin(spoke * 0.7 + spin * 1.4) * outer * params.wobble * 0.18;
@@ -4886,20 +5287,24 @@ function drawRippleTunnelMesh(ctx, width, height, params, palette, time) {
     ctx.stroke();
   }
 
-  const startIndex = ((Math.ceil((1 - flowTurns) * params.slices) % params.slices) + params.slices) % params.slices;
-  for (let order = 0; order < params.slices; order += 1) {
-    const index = (startIndex + order) % params.slices;
-    const depth = (((index / params.slices) + flowTurns) % 1 + 1) % 1;
+  const startIndex = ((Math.ceil((1 - flowTurns) * sliceCount) % sliceCount) + sliceCount) % sliceCount;
+  for (let order = 0; order < sliceCount; order += 1) {
+    const index = (startIndex + order) % sliceCount;
+    const depth = (((index / sliceCount) + flowTurns) % 1 + 1) % 1;
     const depthScale = Math.pow(depth, params.depthCurve);
     const radiusX = aperture + (outer - aperture) * depthScale;
     const radiusY = aperture * params.squash + (outer * params.squash - aperture * params.squash) * depthScale;
     const shimmer = 1 + Math.sin(index * 0.9 + spin * 1.7) * params.wobble * 0.35;
     const tone = palette.accents[index % palette.accents.length];
     const alpha = clamp((0.18 + depthScale * 0.3) * inkOpacity, 0, 0.96);
+    const ringSteps = Math.max(
+      28,
+      Math.min(120, Math.round((36 + Math.max(radiusX, radiusY) * 0.045) * renderProfile.rippleSegmentScale))
+    );
 
     ctx.beginPath();
-    for (let step = 0; step <= 120; step += 1) {
-      const t = step / 120;
+    for (let step = 0; step <= ringSteps; step += 1) {
+      const t = step / ringSteps;
       const theta = t * TAU;
       const ripple =
         1 +
@@ -4928,7 +5333,7 @@ function drawRippleTunnelMesh(ctx, width, height, params, palette, time) {
   ctx.ellipse(vanishX, vanishY, aperture * 2.3, aperture * 2.3 * params.squash, 0, 0, TAU);
   ctx.fill();
 
-  recordVisibleInstances("ripple_tunnel_mesh", params.spokes + params.slices);
+  recordVisibleInstances("ripple_tunnel_mesh", spokeCount + sliceCount);
 }
 
 function drawHeringWarp(ctx, width, height, params, palette, time) {
